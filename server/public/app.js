@@ -730,26 +730,7 @@ function wireTxSetup() {
     const a = await api("/audio/status").catch(() => null);
     if (!document.body.contains(box)) return;
     box.innerHTML = txSetupRow(a);
-    wireTxSetup();
-  showSync(sync);
-  document.getElementById("syncnow").onclick = async (e) => {
-    e.target.loading = true;
-    await save();
-    showSync(await api("/sync/now", { method: "POST", body: "{}" }).catch((err) => ({ error: err.message })));
-    e.target.loading = false;
-  };
-  document.getElementById("updcheck").onclick = async (e) => {
-    e.target.loading = true;
-    const u = await api("/update/check", { method: "POST", body: "{}" }).catch((err) => ({ error: err.message }));
-    e.target.loading = false;
-    document.getElementById("updresult").innerHTML = u.error
-      ? tag(`Couldn't check: ${u.error}`, "danger")
-      : u.behind
-        ? tag(`${u.behind} new change${u.behind === 1 ? "" : "s"}: use the banner at the top to update`, "primary")
-        : tag("Up to date", "success");
-    checkUpdates();
-  };
-    if (a?.setup?.running) setTimeout(poll, 1500);
+    wireTxSetup(); // polls again while setup is running
   };
   const go = document.getElementById("txsetup-go");
   if (go) go.onclick = async () => {
@@ -1032,6 +1013,24 @@ async function renderSettings(tabName = "general") {
     };
   }
   wireTxSetup();
+  showSync(sync);
+  document.getElementById("syncnow").onclick = async (e) => {
+    e.target.loading = true;
+    await save();
+    showSync(await api("/sync/now", { method: "POST", body: "{}" }).catch((err) => ({ error: err.message })));
+    e.target.loading = false;
+  };
+  document.getElementById("updcheck").onclick = async (e) => {
+    e.target.loading = true;
+    const u = await api("/update/check", { method: "POST", body: "{}" }).catch((err) => ({ error: err.message }));
+    e.target.loading = false;
+    document.getElementById("updresult").innerHTML = u.error
+      ? tag(`Couldn't check: ${u.error}`, "danger")
+      : u.behind
+        ? tag(`${u.behind} new change${u.behind === 1 ? "" : "s"}: use the banner at the top to update`, "primary")
+        : tag("Up to date", "success");
+    checkUpdates();
+  };
   for (const b of view.querySelectorAll("[data-test]")) {
     b.onclick = async () => {
       const out = document.getElementById(`test-${b.dataset.test}`);
