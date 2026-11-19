@@ -110,31 +110,53 @@ async function drain() {
 
 /**
  * The toolbar icon is the steady, off-screen signal of what ClearNote is doing:
- * red REC while audio is recorded, grey ON while captions are captured, a count
- * when lines are waiting to sync. Nothing blinks.
+ * its colour shows the state (see setIconState), plus a small grey count when
+ * lines are waiting to sync. No badges, nothing blinks.
  */
 async function badge() {
   const { [QUEUE_KEY]: q = [] } = await chrome.storage.local.get(QUEUE_KEY);
   const { [REC_KEY]: rec = null, [SESSIONS_KEY]: sessions = {} } = await chrome.storage.session.get([REC_KEY, SESSIONS_KEY]);
-  let text = "";
-  let color = "#52525b";
-  let title = "ClearNote";
-  if (rec) {
-    text = "REC";
-    color = "#dc2626";
-    title = "ClearNote: recording audio and captions";
-  } else if (Object.keys(sessions).length) {
-    text = "ON";
-    title = "ClearNote: capturing captions";
+  const state = rec ? "recording" : Object.keys(sessions).length ? "capturing" : "idle";
+  const title = {
+    recording: "ClearNote: recording audio",
+    capturing: "ClearNote: capturing captions",
+    idle: "ClearNote",
+  }[state];
+  await setIconState(state);
+  // A small grey count only when lines are waiting to sync; never a REC badge.
+  await chrome.action.setBadgeBackgroundColor({ color: "#52525b" });
+  await chrome.action.setBadgeText({ text: q.length ? String(Math.min(q.length, 99)) : "" });
+  await chrome.action.setTitle({ title: q.length ? `${title} · ${q.length} waiting to sync` : title });
+}
+
+/**
+ * The icon itself shows the state: grey when idle, its normal colours while
+ * captions are captured, tinted a muted red while audio is recorded.
+ */
+let iconState = null;
+async function setIconState(state) {
+  if (state === iconState) return;
+  iconState = state;
+  try {
+    const imageData = {};
+    for (const size of [16, 32]) {
+      const blob = await (await fetch(chrome.runtime.getURL(`icons/icon-${size}.png`))).blob();
+      const bmp = await createImageBitmap(blob);
+      const canvas = new OffscreenCanvas(size, size);
+      const ctx = canvas.getContext("2d");
+      if (state === "idle") ctx.filter = "grayscale(1) opacity(0.75)";
+      ctx.drawImage(bmp, 0, 0, size, size);
+      if (state === "recording") {
+        ctx.globalCompositeOperation = "source-atop";
+        ctx.fillStyle = "rgba(185, 64, 64, 0.85)";
+        ctx.fillRect(0, 0, size, size);
+      }
+      imageData[size] = ctx.getImageData(0, 0, size, size);
+    }
+    await chrome.action.setIcon({ imageData });
+  } catch (err) {
+    console.warn("[ClearNote] icon update failed", err);
   }
-  if (q.length && !rec) {
-    text = String(Math.min(q.length, 99));
-    color = "#b45309";
-    title = `ClearNote: ${q.length} batches waiting to sync`;
-  }
-  await chrome.action.setBadgeBackgroundColor({ color });
-  await chrome.action.setBadgeText({ text });
-  await chrome.action.setTitle({ title });
 }
 
 chrome.alarms.create("cn-drain", { periodInMinutes: 0.25 });
@@ -210,13 +232,23 @@ const handlers = {
   /** What the toolbar popup should offer on a tab. */
   async pageInfo({ tabId, url }) {
     const kind = pageKind(url);
-    const { [RULES_KEY]: cache = {} } = await chrome.storage.session.get(RULES_KEY);
-    const decision = cache[tabId] || (await evaluateFor(tabId, { url, platform: kind === "youtube" ? "youtube" : "" }));
-    return { kind, decision };
+    const call = kind === "meeting" ? callMeta(url) : null;
+    const decision = await evaluateFor(tabId, { url, platform: call?.platform || (kind === "youtube" ? "youtube" : ""), meetingKey: call?.meetingKey });
+    return { kind, decision, call };
+  },
+
+  /** YouTube transcript plus audio: the session ends when the recording stops. */
+  async endWithRecording(_payload, sender) {
+    const { [SESSIONS_KEY]: sessions = {} } = await chrome.storage.session.get(SESSIONS_KEY);
+    if (sessions[sender.tab?.id]) {
+      sessions[sender.tab.id].audioOnly = true;
+      await chrome.storage.session.set({ [SESSIONS_KEY]: sessions });
+    }
+    return { ok: true };
   },
 
   /** Audio-only recording of any page: a session with no captions. */
-  async startAudioOnly({ tabId, streamId, url, title }) {
+  async startAudioOnly({ tabId, streamId, url, title, platform, meetingKey, platformLabel }) {
     const startedAt = Date.now();
     let host = "web";
     try {
@@ -224,10 +256,12 @@ const handlers = {
     } catch {
       /* keep "web" */
     }
+    // On a call, the recording belongs to that call (so its calendar match and
+    // rule apply); anywhere else it is a session of its own.
     const { id } = await api("/api/sessions", {
-      meetingKey: `web:${url}:${startedAt}`,
-      platform: "web",
-      platformLabel: host,
+      meetingKey: meetingKey || `web:${url}:${startedAt}`,
+      platform: platform || "web",
+      platformLabel: platformLabel || host,
       title: title || host,
       url,
       startedAt,
@@ -312,6 +346,16 @@ async function rememberTabSession(tabId, info) {
 }
 
 const RULES_KEY = "cn_tab_rules";
+
+/** Platform and meeting key for a call URL, matching what the page script sends. */
+function callMeta(url = "") {
+  const meet = url.match(/meet\.google\.com\/(?:[\w-]+\/)*([a-z]{3}-[a-z]{4}-[a-z]{3})\b/i);
+  if (meet) return { platform: "google_meet", platformLabel: "Google Meet", meetingKey: meet[1].toLowerCase() };
+  const zoom = url.match(/zoom\.us\/(?:j|wc|s)\/(\d{9,12})/i);
+  if (zoom) return { platform: "zoom", platformLabel: "Zoom", meetingKey: `zoom:${zoom[1]}` };
+  if (/teams\.(microsoft|live)\.com|cloud\.microsoft\.com/.test(url)) return { platform: "teams", platformLabel: "Microsoft Teams", meetingKey: `teams:${url.split("?")[0]}` };
+  return null;
+}
 
 function pageKind(url = "") {
   if (/^https:\/\/(meet\.google\.com|[\w.-]*zoom\.us|teams\.(microsoft|live)\.com|[\w.-]*cloud\.microsoft\.com)\//.test(url)) return "meeting";

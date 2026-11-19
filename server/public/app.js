@@ -719,14 +719,14 @@ async function renderSettings(tabName = "general") {
           ${sw("hideCaptions", "Hide the platform's caption overlay", "Captions stay on so ClearNote can read them, but off your screen.")}
           <p class="field-hint" style="margin:0">What appears on a meeting page, and when ClearNote captures at all, is set per situation in
             <a href="#/settings/rules">Rules</a>. The ClearNote icon in Chrome's toolbar always shows the state without blinking:
-            ON while captions are captured, a red REC while audio is recorded.</p>
+            normal colours while captions are captured, muted red while audio is recorded.</p>
         </div></sl-tab-panel>
 
         <sl-tab-panel name="rules"><div id="rules" class="stack">${loading("Loading rules…")}</div></sl-tab-panel>
 
         <sl-tab-panel name="recording"><div class="panel stack">
           <h2>Recording and transcription</h2>
-          ${sw("oneClickRecord", "One click to record", "During a call, clicking the ClearNote icon in Chrome's toolbar starts recording straight away. Off: the click opens a menu with a Record audio button. Chrome requires that click either way; it can't start recording on its own.")}
+          ${sw("oneClickRecord", "Start straight away", "Clicking the ClearNote icon starts the ticked choices at once, without the Start button. Chrome requires that click either way; recording can't start on its own.")}
           ${sw("recordMic", "Record my microphone with the call", "Your voice on its own track, so the transcript knows which lines are yours. Chrome asks permission once, from the extension's own settings.")}
           <div class="row">${tag(audio?.ready ? "Ready" : "Not set up", audio?.ready ? "success" : "warning")}
             <span>${
@@ -734,7 +734,8 @@ async function renderSettings(tabName = "general") {
                 ? `Recorded audio is transcribed on this computer with whisper.cpp (${esc(audio.model)}). Nothing is sent anywhere.`
                 : `Missing: ${esc((audio?.missing || ["whisper.cpp"]).join(", "))}. See the README's audio section.`
             }</span></div>
-          <p class="field-hint" style="margin:0">To record a call: click the ClearNote icon in Chrome's toolbar, or press Option+Shift+R. The icon shows a red REC while recording; click it again to stop.</p>
+          <p class="field-hint" style="margin:0">To record: click the ClearNote icon in Chrome's toolbar, check the ticked choices, then Start. Or press Option+Shift+R.
+            The icon itself shows the state: grey when idle, normal while capturing captions, muted red while recording audio.</p>
         </div></sl-tab-panel>
 
         <sl-tab-panel name="ai"><div class="panel stack">
@@ -999,9 +1000,9 @@ const SITE_LABELS = {
   any: "Anywhere",
 };
 const HOST_LABELS = { any: "Anyone hosts", me: "I host", others: "Someone else hosts", unknown: "Not on my calendar" };
-const CAPTION_LABELS = { auto: "Capture automatically", click: "When I click the icon", off: "Off" };
+const CAPTION_LABELS = { auto: "Capture automatically", click: "Ticked when I open ClearNote", off: "Off (unticked)" };
 const PANEL_LABELS = { full: "Full panel", compact: "Small label", hidden: "Nothing" };
-const AUDIO_LABELS = { click: "One click on the icon", off: "Off" };
+const AUDIO_LABELS = { click: "Ticked when I open ClearNote", off: "Unticked" };
 const CALL_SITES = ["calls", "meet", "zoom", "teams"];
 
 let rulesDraft = null;

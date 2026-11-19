@@ -104,7 +104,8 @@
   }
   window.addEventListener("yt-navigate-start", () => stopLive("navigated"));
 
-  async function capture({ again = false } = {}) {
+  async function capture({ again = false, keepOpen = false } = {}) {
+    keep = keepOpen;
     if (!videoId()) return { ok: false, error: "Open a video first." };
     if (live) return { ok: true, mode: "live", note: "Already reading this video's captions." };
     const startedAt = Date.now();
@@ -130,6 +131,8 @@
     return fill(created.sessionId, startedAt);
   }
 
+  let keep = false;
+
   async function fill(sessionId, startedAt) {
     const lines = await readTranscriptPanel();
 
@@ -143,6 +146,11 @@
         endMs: lines[i + 1]?.startMs ?? l.startMs + 4000,
       }));
       for (let i = 0; i < segments.length; i += 200) await send("segments", { sessionId, segments: segments.slice(i, i + 200) });
+      if (keep) {
+        // Audio is being recorded too: the session ends when that recording stops.
+        await send("endWithRecording", {});
+        return { ok: true, mode: "transcript", lines: segments.length, sessionId };
+      }
       const durationMs = Math.round((video()?.duration || 0) * 1000) || segments[segments.length - 1].endMs;
       await send("endSession", { sessionId, endedAt: startedAt + durationMs, reason: "transcript", speakers: [who], title: title() });
       return { ok: true, mode: "transcript", lines: segments.length };
@@ -153,7 +161,7 @@
 
   chrome.runtime.onMessage.addListener((msg, _sender, respond) => {
     if (msg?.type === "ytCapture") {
-      capture({ again: !!msg.again }).then(respond).catch((err) => respond({ ok: false, error: err.message }));
+      capture({ again: !!msg.again, keepOpen: !!msg.keepOpen }).then(respond).catch((err) => respond({ ok: false, error: err.message }));
       return true;
     }
     if (msg?.type === "ytStop") {

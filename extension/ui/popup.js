@@ -1,3 +1,9 @@
+// The toolbar popup. It shows where you are and what ClearNote is doing there,
+// with the choices your rules suggest already ticked. One button starts them.
+//
+// Clicking the extension icon is the gesture Chrome needs before an extension
+// may record a tab's sound, which is why recording is started from here.
+
 const ask = (type, payload) =>
   new Promise((r) =>
     chrome.runtime.sendMessage({ type, payload }, (res) => {
@@ -7,214 +13,235 @@ const ask = (type, payload) =>
     }),
   );
 
-async function paint() {
-  const s = await ask("status");
-  const server = document.getElementById("server");
-  server.textContent = s.reachable ? "connected" : "unreachable";
-  server.className = `v ${s.reachable ? "ok" : "bad"}`;
-
-  const pending = document.getElementById("pending");
-  pending.textContent = s.pending ? `${s.pending} batches` : "nothing";
-  pending.className = `v ${s.pending ? "warn" : "ok"}`;
-
-  document.getElementById("auto").textContent = s.autoCapture ? "on" : "off";
-  document.getElementById("dash").href = s.dashboardUrl || "http://localhost:8787";
-  document.getElementById("settingsLink").href = `${(s.dashboardUrl || "http://localhost:8787").replace(/\/$/, "")}/#/settings`;
-}
-
-document.getElementById("retry").onclick = async (e) => {
-  e.target.textContent = "Syncing…";
-  await ask("retryNow");
-  e.target.textContent = "Retry sync";
-  paint();
-};
-
-
-paint();
-
-// ------------------------------------------------------------ what to do here
-// Clicking the extension icon is the gesture Chrome needs before an extension
-// may capture a tab's sound, so recording is started from here. With "one click
-// to record" on, opening this popup does the main action for the page at once:
-//   a call        → capture it (if rules held it back) and record its audio
-//   YouTube       → take the video's transcript
-//   any other page → record its audio
-
-let autoDone = false;
-
 const $ = (id) => document.getElementById(id);
+const esc = (s) =>
+  String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
-function show(btn, label, onClick, cls = "rec") {
-  btn.hidden = false;
-  btn.disabled = false;
-  btn.textContent = label;
-  btn.className = cls;
-  btn.onclick = onClick;
+let tab;
+let settings = {};
+let base = "http://localhost:8787";
+let clockTimer = null;
+
+const HOST_TEXT = { me: "You're the host", others: "Someone else is hosting", unknown: "Not on your calendar" };
+const SITE_TEXT = { meet: "Google Meet", zoom: "Zoom", teams: "Microsoft Teams" };
+
+function choice(id, title, sub, checked, disabled = false) {
+  return `<label class="choice ${disabled ? "done" : ""}">
+    <input type="checkbox" id="${id}" ${checked ? "checked" : ""} ${disabled ? "disabled" : ""} />
+    <div><b>${esc(title)}</b><span>${esc(sub)}</span></div></label>`;
 }
 
-async function streamFor(tabId) {
-  return chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+function setMain(label, onClick, { quiet = false } = {}) {
+  const go = $("go");
+  go.hidden = false;
+  go.disabled = false;
+  go.textContent = label;
+  go.className = `main ${quiet ? "quiet" : ""}`;
+  go.onclick = async (e) => {
+    e.preventDefault();
+    go.disabled = true;
+    try {
+      await onClick();
+    } catch (err) {
+      $("msg").textContent = err.message;
+    }
+    render();
+  };
 }
 
-async function waitForSession(tabId, ms = 20000) {
+async function streamFor() {
+  return chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
+}
+
+async function startAudio({ meta } = {}) {
+  const streamId = await streamFor();
+  const st = await ask("tabState", { tabId: tab.id });
+  const res = st.session
+    ? await ask("startRecording", { tabId: tab.id, streamId })
+    : await ask("startAudioOnly", { tabId: tab.id, streamId, url: tab.url, title: tab.title, ...(meta || {}) });
+  if (!res.ok) throw new Error(res.error || "Couldn't start recording.");
+}
+
+async function waitForSession(ms = 20000) {
   for (let t = 0; t < ms; t += 500) {
-    const st = await ask("tabState", { tabId });
+    const st = await ask("tabState", { tabId: tab.id });
     if (st.session) return st;
     await new Promise((r) => setTimeout(r, 500));
   }
   return null;
 }
 
-async function paintAudio() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const btn = $("rec");
-  const alt = $("rec2");
-  const hint = $("recHint");
-  btn.hidden = alt.hidden = true;
+function showRecording(rec) {
+  $("recbox").hidden = false;
+  $("rectext").textContent = rec.mic ? "Recording this tab and your mic" : "Recording this tab";
+  clearInterval(clockTimer);
+  const tick = () => {
+    const s = Math.max(0, Math.round((Date.now() - (rec.at || Date.now())) / 1000));
+    $("clock").textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  };
+  tick();
+  clockTimer = setInterval(tick, 1000);
+}
+
+async function render() {
+  $("choices").innerHTML = "";
+  $("go").hidden = true;
+  $("recbox").hidden = true;
   if (!tab?.id) return;
 
-  const [st, info, s] = await Promise.all([
-    ask("tabState", { tabId: tab.id }),
-    ask("pageInfo", { tabId: tab.id, url: tab.url }),
-    ask("getSettings"),
-  ]);
-  const actions = info.decision?.actions || {};
-  const rule = info.decision?.rule?.name;
-  const oneClick = s.oneClickRecord !== false && !autoDone;
-  const fail = (msg) => {
-    hint.textContent = msg;
-    paintAudio();
-  };
+  const [st, info] = await Promise.all([ask("tabState", { tabId: tab.id }), ask("pageInfo", { tabId: tab.id, url: tab.url })]);
+  const d = info.decision || {};
+  const a = d.actions || {};
+  const ruleName = d.rule?.name;
+  let hostname = "This page";
+  try {
+    hostname = new URL(tab.url).hostname.replace(/^www\./, "");
+  } catch {
+    /* keep */
+  }
+  $("site").textContent = info.kind === "meeting" ? SITE_TEXT[d.site] || "Call" : info.kind === "youtube" ? "YouTube" : hostname;
+  $("detail").textContent = [d.host && HOST_TEXT[d.host], ruleName && `rule: ${ruleName}`].filter(Boolean).join(" · ");
 
+  // ---- recording now: show it and a Stop button
   if (st.recording) {
-    show(btn, "Stop recording", async () => {
+    showRecording(st.recording);
+    $("status").textContent = "";
+    setMain("Stop recording", async () => {
       await ask("stopRecording");
-      paintAudio();
-    }, "rec on");
-    hint.textContent = st.recording.mic ? "Recording this tab and your mic." : "Recording this tab (mic not available).";
+      $("msg").innerHTML = `Stopped. The audio is transcribed on your Mac; it appears in the <a href="${base}/#/" target="_blank">dashboard</a> shortly.`;
+    }, { quiet: true });
     return;
   }
   if (st.busy) {
-    hint.textContent = "Already recording another tab. Stop that one first.";
+    $("status").textContent = "ClearNote is recording another tab. Stop that one first.";
     return;
   }
 
-  const recordAudio = async () => {
-    btn.textContent = "Starting…";
-    try {
-      const streamId = await streamFor(tab.id);
-      const res = st.session
-        ? await ask("startRecording", { tabId: tab.id, streamId })
-        : await ask("startAudioOnly", { tabId: tab.id, streamId, url: tab.url, title: tab.title });
-      if (!res.ok) return fail(res.error || "Could not start recording.");
-    } catch (err) {
-      return fail(`Chrome refused: ${err.message}`);
-    }
-    paintAudio();
-  };
-
+  // ---- a call (Meet, Zoom, Teams)
   if (info.kind === "meeting") {
+    $("site").textContent = SITE_TEXT[d.site] || "Call";
+    $("detail").textContent = [d.host && HOST_TEXT[d.host], ruleName && `rule: ${ruleName}`].filter(Boolean).join(" · ");
     if (st.session) {
-      show(btn, "Record audio", recordAudio);
-      hint.textContent = "Captions are being captured. Recording adds an accurate transcript from the audio. Shortcut: Option+Shift+R.";
-      if (oneClick && actions.audio !== "off") {
-        autoDone = true;
-        recordAudio();
-      }
+      $("status").textContent = "Capturing captions. Notes and the summary follow when the call ends.";
+      $("msg").textContent = "Recording the audio as well gives a more accurate transcript and keeps the audio files.";
+      setMain("Record audio too", () => startAudio());
       return;
     }
-    const captureCall = async (withAudio) => {
-      btn.textContent = "Starting…";
-      await chrome.tabs.sendMessage(tab.id, { type: "startCapture" }).catch(() => null);
-      hint.textContent = "Starting capture… (join the call if you haven't yet)";
-      const ready = await waitForSession(tab.id);
-      if (!ready) return fail("Capture hasn't started yet. Join the call and make sure captions are allowed, then click again.");
-      if (withAudio) {
-        st.session = ready.session;
-        await recordAudio();
-      } else paintAudio();
-    };
-    show(btn, "Capture this call", () => captureCall(actions.audio !== "off"));
-    show(alt, "Captions only", () => captureCall(false), "");
-    hint.textContent = rule
-      ? `Not capturing: your rule “${rule}” keeps ClearNote off here. Capture anyway?`
-      : "Not capturing yet.";
-    if (oneClick && actions.captions === "click") {
-      autoDone = true;
-      captureCall(actions.audio !== "off");
-    }
+    $("status").textContent =
+      a.captions === "off"
+        ? d.host === "me"
+          ? "Your own call: Gemini is taking the notes, so ClearNote stays off."
+          : "ClearNote is off here by your rules."
+        : "Not capturing yet.";
+    $("choices").innerHTML =
+      choice("audio", "Record audio", d.host === "me" ? "Keep the audio file. No duplicate notes." : "Records this call's sound and your mic.", a.audio !== "off") +
+      choice("captions", "Capture captions and notes", "Transcript with speaker names, summary and notes Doc.", a.captions !== "off");
+    setMain("Start", async () => {
+      const wantCaptions = $("captions").checked;
+      const wantAudio = $("audio").checked;
+      if (!wantCaptions && !wantAudio) throw new Error("Tick at least one.");
+      if (wantCaptions) {
+        await chrome.tabs.sendMessage(tab.id, { type: "startCapture" }).catch(() => null);
+        $("msg").textContent = "Starting… (join the call if you haven't yet)";
+        const ready = await waitForSession();
+        if (!ready) throw new Error("Capture hasn't started. Join the call and allow captions, then try again.");
+      }
+      if (wantAudio) await startAudio({ meta: info.call });
+    });
     return;
   }
 
+  // ---- YouTube
   if (info.kind === "youtube") {
+    $("site").textContent = "YouTube";
+    $("detail").textContent = ruleName ? `rule: ${ruleName}` : "";
     let yt = await chrome.tabs.sendMessage(tab.id, { type: "ytState" }).catch(() => null);
     if (!yt) {
       // A tab opened before ClearNote was (re)loaded has no reader yet: add it.
       await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["platforms/youtube.js"] }).catch(() => null);
       yt = await chrome.tabs.sendMessage(tab.id, { type: "ytState" }).catch(() => null);
     }
-    if (!yt) {
-      hint.textContent = "ClearNote couldn't read this page. Reload it and try again.";
-      show(alt, "Record audio instead", recordAudio, "");
-      return;
-    }
-    if (yt.live) {
-      show(btn, "Stop reading captions", async () => {
+    if (yt?.live) {
+      $("status").textContent = "Reading the captions as the video plays.";
+      setMain("Stop", async () => {
         const r = await chrome.tabs.sendMessage(tab.id, { type: "ytStop" }).catch(() => ({}));
-        hint.textContent = `Stopped. ${r.lines || 0} lines captured; the summary follows.`;
-        paintAudio();
-      }, "rec on");
-      hint.textContent = "Reading the captions as the video plays.";
+        $("msg").textContent = `Stopped: ${r.lines || 0} lines. The summary follows in the dashboard.`;
+      }, { quiet: true });
       return;
     }
-    const grab = async (again = false) => {
-      btn.textContent = "Reading…";
-      const r = await chrome.tabs.sendMessage(tab.id, { type: "ytCapture", again }).catch((e) => ({ ok: false, error: e.message }));
-      if (!r.ok) return fail(r.error || "Couldn't read this video.");
-      if (r.mode === "exists") {
-        hint.innerHTML = "";
-        hint.append("Already captured. ");
-        const a = Object.assign(document.createElement("a"), {
-          href: `${(s.dashboardUrl || "http://localhost:8787").replace(/\/$/, "")}/#/m/${r.id}`,
-          target: "_blank",
-          textContent: "Open it in the dashboard",
-        });
-        hint.append(a);
-        show(btn, "Capture again", () => grab(true), "");
-        alt.hidden = true;
-        return;
+    $("status").textContent = yt ? "Nothing captured from this video yet." : "ClearNote can't read this page's captions; audio still works.";
+    $("choices").innerHTML =
+      choice("transcript", "Transcript", "The video's own captions, all at once.", !!yt && a.captions !== "off", !yt) +
+      choice("audio", "Record audio", "Keeps the sound as a file while the video plays.", a.audio !== "off");
+    const run = async (again = false) => {
+      const wantT = $("transcript")?.checked;
+      const wantA = $("audio").checked;
+      if (!wantT && !wantA) throw new Error("Tick at least one.");
+      if (wantT) {
+        const r = await chrome.tabs.sendMessage(tab.id, { type: "ytCapture", again, keepOpen: wantA }).catch((e) => ({ ok: false, error: e.message }));
+        if (!r.ok) throw new Error(r.error || "Couldn't read this video.");
+        if (r.mode === "exists") {
+          $("msg").innerHTML = `Already captured. <a href="${base}/#/m/${esc(r.id)}" target="_blank">Open it</a>, or start again to capture a fresh copy.`;
+          setMain("Capture again", () => run(true), { quiet: true });
+          throw Object.assign(new Error(""), { quiet: true });
+        }
+        $("msg").textContent =
+          r.mode === "transcript"
+            ? `Took the transcript (${r.lines} lines). Notes follow in the dashboard${wantA ? " when you stop the recording" : ""}.`
+            : "No transcript on this video: reading the captions as it plays.";
       }
-      hint.textContent =
-        r.mode === "transcript"
-          ? `Took the full transcript (${r.lines} lines). The summary and notes follow in the dashboard.`
-          : "This video has no transcript, so ClearNote reads the captions as it plays. Play the video; click again to stop.";
-      if (r.mode === "live") paintAudio();
-      else btn.hidden = true;
+      if (wantA) await startAudio();
     };
-    show(btn, "Get transcript", () => grab(false));
-    show(alt, "Record audio instead", recordAudio, "");
-    hint.textContent = "Takes the video's transcript, or reads its captions as it plays.";
-    if (oneClick && actions.captions !== "off") {
-      autoDone = true;
-      grab(false);
-    }
+    setMain("Start", () => run(false).catch((e) => { if (!e.quiet) throw e; }));
     return;
   }
 
+  // ---- any other web page
   if (info.kind === "web") {
-    show(btn, actions.audio === "off" ? "Record anyway" : "Record audio", recordAudio);
-    hint.textContent =
-      actions.audio === "off"
-        ? `Recording is off here (${rule || "your rules"}).`
-        : "Records this tab's sound and transcribes it on your Mac. No speaker names on websites. Shortcut: Option+Shift+R.";
-    if (oneClick && actions.audio !== "off") {
-      autoDone = true;
-      recordAudio();
+    let host = "This page";
+    try {
+      host = new URL(tab.url).hostname.replace(/^www\./, "");
+    } catch {
+      /* keep */
     }
+    $("site").textContent = host;
+    $("detail").textContent = ruleName ? `rule: ${ruleName}` : "";
+    $("status").textContent = "Websites have no captions ClearNote can read, so it works from the audio. No speaker names.";
+    $("choices").innerHTML = choice("audio", "Record audio", "Transcribed on your Mac, then summarised and saved.", a.audio !== "off");
+    setMain("Start", async () => {
+      if (!$("audio").checked) throw new Error("Tick Record audio to start.");
+      await startAudio();
+    });
     return;
   }
 
-  hint.textContent = "Open a call, a video or a web page to record it.";
+  $("site").textContent = "Nothing to capture here";
+  $("status").textContent = "Open a call, a video or a web page.";
 }
 
-paintAudio();
+async function header() {
+  const s = await ask("status");
+  base = (s.dashboardUrl || "http://localhost:8787").replace(/\/$/, "");
+  $("server").textContent = s.reachable ? "" : "server offline";
+  $("server").className = `server ${s.reachable ? "" : "bad"}`;
+  $("dash").href = base;
+  $("settingsLink").href = `${base}/#/settings/rules`;
+  if (s.pending) {
+    $("retry").hidden = false;
+    $("retry").textContent = `${s.pending} waiting · retry`;
+    $("retry").onclick = async (e) => {
+      e.preventDefault();
+      await ask("retryNow");
+      header();
+    };
+  }
+}
+
+(async () => {
+  [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  settings = await ask("getSettings");
+  header();
+  await render();
+  // Optional: start straight away with the ticked choices.
+  if (settings.oneClickRecord === true && !$("go").hidden && $("go").textContent === "Start") $("go").click();
+})();

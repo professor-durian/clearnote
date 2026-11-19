@@ -92,6 +92,14 @@ export async function processAudio(meetingId, { force = false, myName = "" } = {
   if (!meeting.ended_at && !force) return;
   if (!force && tracks.some((t) => !t.finished)) return;
 
+  // YouTube's own transcript is already accurate: keep the audio as a file only.
+  const hasCaptions = db.prepare(`SELECT 1 FROM segments WHERE meeting_id = ? LIMIT 1`).get(meetingId);
+  if (meeting.platform === "youtube" && hasCaptions) {
+    setStatus.run("done", null, meetingId);
+    onDone(meetingId);
+    return;
+  }
+
   const ready = transcriptionStatus();
   if (!ready.ready) {
     setStatus.run("waiting", `Transcription not set up: missing ${ready.missing.join(", ")}`, meetingId);

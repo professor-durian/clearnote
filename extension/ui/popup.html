@@ -5,56 +5,71 @@
     <title>ClearNote</title>
     <style>
       :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
       body {
-        width: 280px; margin: 0; padding: 14px;
-        font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-        background: #11161d; color: #e6edf3;
+        width: 320px; margin: 0; padding: 14px 16px 12px;
+        font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        background: #18181b; color: #e4e4e7;
       }
-      h1 { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: 0 0 12px; }
-      .mark { width: 18px; height: 18px;
-        background: url("../icons/mark.svg") center/contain no-repeat; }
-      .row { display: flex; justify-content: space-between; align-items: center;
-        padding: 7px 0; border-bottom: 1px solid #1e2531; }
-      .row:last-of-type { border-bottom: 0; }
-      .k { color: #8b97a6; }
-      .v { font-weight: 600; }
-      .ok { color: #3ddc84; }
-      .bad { color: #f0734a; }
-      .warn { color: #f0b429; }
-      .actions { display: flex; gap: 8px; margin-top: 12px; }
-      button, a.btn {
-        flex: 1; text-align: center; font: inherit; font-weight: 600; padding: 7px 8px;
-        border-radius: 8px; border: 1px solid #2a3340; background: #1a222c;
-        color: #d7e0ea; cursor: pointer; text-decoration: none;
+      header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+      .mark { width: 18px; height: 18px; background: url("../icons/mark.svg") center/contain no-repeat; }
+      h1 { font-size: 14px; margin: 0; flex: 1; }
+      .server { font-size: 11px; color: #a1a1aa; }
+      .server.bad { color: #fca5a5; }
+      .where { border: 1px solid #3f3f46; border-radius: 8px; padding: 10px 12px; background: #1f1f23; }
+      .where .site { font-weight: 600; color: #fafafa; }
+      .where .detail { color: #a1a1aa; font-size: 12px; margin-top: 2px; }
+      .status { margin-top: 8px; font-size: 12px; color: #d4d4d8; }
+      .choices { margin: 12px 0 0; display: flex; flex-direction: column; gap: 8px; }
+      .choice { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border: 1px solid #3f3f46; border-radius: 8px; cursor: pointer; }
+      .choice:hover { background: #222226; }
+      .choice input { margin: 2px 0 0; accent-color: #0ea5e9; width: 15px; height: 15px; }
+      .choice b { display: block; color: #fafafa; font-weight: 600; }
+      .choice span { color: #a1a1aa; font-size: 12px; }
+      .choice.done { cursor: default; opacity: .8; }
+      button.main, a.link {
+        font: inherit; font-weight: 600; border-radius: 8px; cursor: pointer; text-decoration: none; text-align: center;
       }
-      button:hover, a.btn:hover { background: #222c38; }
-      a.btn.primary { background: #2f7cf6; border-color: #2f7cf6; color: #fff; }
-      p.hint { color: #7a8492; font-size: 11.5px; margin: 10px 0 0; }
-      .audio { margin-top: 12px; }
-      .audio p.hint { margin-top: 6px; }
-      button.rec { width: 100%; background: #f0734a; border-color: #f0734a; color: #fff; }
-      button.rec:hover { background: #f4865f; }
-      button.rec.on { background: #1a222c; border-color: #f0734a; color: #f0734a; }
+      button.main { width: 100%; margin-top: 12px; padding: 9px 12px; border: 1px solid #0284c7; background: #0284c7; color: #fff; }
+      button.main:hover { background: #0369a1; }
+      button.main.quiet { background: #27272a; border-color: #3f3f46; color: #e4e4e7; }
+      button.main:disabled { opacity: .5; cursor: default; }
+      .msg { margin-top: 10px; font-size: 12px; color: #d4d4d8; }
+      .msg a { color: #7dd3fc; }
+      .rec { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: #27272a; }
+      .rec .t { flex: 1; }
+      .rec .clock { font-variant-numeric: tabular-nums; color: #a1a1aa; }
+      footer { display: flex; gap: 12px; margin-top: 14px; padding-top: 10px; border-top: 1px solid #27272a; font-size: 12px; }
+      footer a { color: #a1a1aa; text-decoration: none; }
+      footer a:hover { color: #fafafa; }
+      footer .spacer { flex: 1; }
+      [hidden] { display: none !important; }
     </style>
   </head>
   <body>
-    <h1><span class="mark"></span> ClearNote</h1>
-    <div class="row"><span class="k">Server</span><span class="v" id="server">…</span></div>
-    <div class="row"><span class="k">Queued</span><span class="v" id="pending">…</span></div>
-    <div class="row"><span class="k">Auto-capture</span><span class="v" id="auto">…</span></div>
-    <div class="audio" id="audio">
-      <button id="rec" class="rec" hidden>Record audio</button>
-      <button id="rec2" hidden style="width:100%;margin-top:6px">Alternative</button>
-      <p class="hint" id="recHint"></p>
+    <header><span class="mark"></span><h1>ClearNote</h1><span class="server" id="server"></span></header>
+
+    <section class="where">
+      <div class="site" id="site">…</div>
+      <div class="detail" id="detail"></div>
+      <div class="status" id="status"></div>
+    </section>
+
+    <div class="rec" id="recbox" hidden>
+      <span class="t" id="rectext">Recording audio</span>
+      <span class="clock" id="clock"></span>
     </div>
-    <div class="actions">
-      <a class="btn primary" id="dash" href="#" target="_blank" rel="noreferrer">Dashboard</a>
-      <button id="retry">Retry sync</button>
-    </div>
-    <div class="actions">
-      <a class="btn" id="settingsLink" href="#" target="_blank" rel="noreferrer">Settings</a>
-    </div>
-    <p class="hint">No bot joins your calls. ClearNote reads the captions the meeting platform already generates.</p>
+
+    <form class="choices" id="choices"></form>
+    <button class="main" id="go" hidden>Start</button>
+    <p class="msg" id="msg"></p>
+
+    <footer>
+      <a id="dash" href="#" target="_blank" rel="noreferrer">Dashboard</a>
+      <a id="settingsLink" href="#" target="_blank" rel="noreferrer">Settings</a>
+      <span class="spacer"></span>
+      <a id="retry" href="#" hidden>Retry sync</a>
+    </footer>
     <script src="popup.js"></script>
   </body>
 </html>

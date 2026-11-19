@@ -21,7 +21,7 @@ export const DEFAULT_RULES = [
     id: "host-meet",
     name: "Google Meet calls I host",
     match: { site: "meet", host: "me", domains: [] },
-    actions: { captions: "off", panel: "hidden", audio: "click", summary: false, saveNotes: false, saveAudio: false },
+    actions: { captions: "off", panel: "hidden", audio: "click", summary: false, saveNotes: false, saveAudio: true },
   },
   {
     id: "others-calls",
@@ -39,7 +39,7 @@ export const DEFAULT_RULES = [
     id: "youtube",
     name: "YouTube",
     match: { site: "youtube", host: "any", domains: [] },
-    actions: { captions: "click", panel: "hidden", audio: "off", summary: true, saveNotes: true, saveAudio: false },
+    actions: { captions: "click", panel: "hidden", audio: "off", summary: true, saveNotes: true, saveAudio: true },
   },
   {
     id: "anywhere",

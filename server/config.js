@@ -22,7 +22,7 @@ export const FIELDS = {
   hideCaptions: { default: true },
   recordMic: { default: true },
   panelMode: { default: "compact" },
-  oneClickRecord: { default: true }, // clicking the icon during a call starts recording // in-call panel: "full" | "compact" | "hidden"
+  oneClickRecord: { default: false }, // start the ticked choices as soon as the popup opens // in-call panel: "full" | "compact" | "hidden"
   debug: { default: false },
   // AI
   aiPrimary: { default: "anthropic" }, // "anthropic" | "openrouter"
