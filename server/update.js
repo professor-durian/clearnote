@@ -35,8 +35,12 @@ export async function checkForUpdate() {
   try {
     const branch = await git("rev-parse", "--abbrev-ref", "HEAD");
     await git("fetch", "--quiet", "origin", branch);
-    const behind = Number(await git("rev-list", "--count", `HEAD..origin/${branch}`)) || 0;
-    const log = behind ? await git("log", "--format=%s", "--no-merges", `HEAD..origin/${branch}`) : "";
+    // Count only changes this computer doesn't have in any form: if the
+    // history on GitHub was rewritten (same changes, new commit ids), the
+    // rewritten copies of what's here already don't count as new.
+    const range = `HEAD...origin/${branch}`;
+    const behind = Number(await git("rev-list", "--count", "--right-only", "--cherry-pick", "--no-merges", range)) || 0;
+    const log = behind ? await git("log", "--format=%s", "--right-only", "--cherry-pick", "--no-merges", range) : "";
     const dirty = !!(await localChanges());
     Object.assign(state, { checkedAt: Date.now(), behind, changes: log ? log.split("\n").slice(0, 20) : [], error: null, dirty });
   } catch (err) {
@@ -66,7 +70,19 @@ export async function applyUpdate() {
     await git("checkout", "--", LOCK).catch(() => {});
     const before = await git("rev-parse", "HEAD");
     const branch = await git("rev-parse", "--abbrev-ref", "HEAD");
-    await git("pull", "--ff-only", "--quiet", "origin", branch);
+    await git("fetch", "--quiet", "origin", branch);
+    const target = `origin/${branch}`;
+    const straight = await git("merge-base", "--is-ancestor", "HEAD", target).then(() => true, () => false);
+    if (straight) {
+      await git("merge", "--ff-only", "--quiet", target);
+    } else {
+      // GitHub's history was rewritten. Follow it only if every commit here
+      // already exists there in some form; never throw away work of this computer's own.
+      const ownOnly = (await git("cherry", target, "HEAD")).split("\n").filter((l) => l.startsWith("+"));
+      if (ownOnly.length) throw new Error("not possible to fast-forward: this computer has commits of its own");
+      if (await localChanges()) throw new Error("local changes would be overwritten");
+      await git("reset", "--hard", "--quiet", target);
+    }
     const changed = await git("diff", "--name-only", before, "HEAD");
     if (/^server\/package(-lock)?\.json$/m.test(changed)) {
       const npm = path.join(path.dirname(process.execPath), "npm");
