@@ -37,7 +37,17 @@ if [ -d "$DIR/.git" ]; then
   say "Updating $DIR"
   # npm may have rewritten the package lock on an earlier run; that isn't yours.
   git -C "$DIR" checkout -- server/package-lock.json 2>/dev/null || true
-  git -C "$DIR" pull --ff-only
+  git -C "$DIR" fetch --quiet origin
+  BRANCH="$(git -C "$DIR" rev-parse --abbrev-ref HEAD)"
+  if ! git -C "$DIR" merge --ff-only --quiet "origin/$BRANCH" 2>/dev/null; then
+    # The history on GitHub was rewritten (same changes, new commit ids).
+    # Follow it, but only when this copy has no commits or edits of its own.
+    if [ -z "$(git -C "$DIR" cherry "origin/$BRANCH" HEAD | grep '^+')" ] && [ -z "$(git -C "$DIR" status --porcelain --untracked-files=no)" ]; then
+      git -C "$DIR" reset --hard --quiet "origin/$BRANCH"
+    else
+      fail "$DIR has changes of its own, so it can't be updated automatically."
+    fi
+  fi
 else
   say "Downloading ClearNote to $DIR"
   mkdir -p "$(dirname "$DIR")"
