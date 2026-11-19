@@ -7,6 +7,17 @@
 set -u
 
 ENV_FILE="${CLEARNOTE_ENV:-$HOME/.clearnote.env}"
+# Read the env file first, so CLEARNOTE_NODE set there is honoured below.
+# Secrets live outside the project directory, in a file only you can read, so
+# they are never near anything that gets copied or committed.
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  . "$ENV_FILE"
+  set +a
+else
+  echo "[clearnote] no $ENV_FILE — starting without an API key or calendar credentials"
+fi
+
 if [ -n "${CLEARNOTE_NODE:-}" ]; then
   NODE="$CLEARNOTE_NODE"
 else
@@ -19,16 +30,6 @@ else
 fi
 
 cd "$(dirname "$0")" || exit 1
-
-# Secrets live outside the project directory, in a file only you can read, so
-# they are never near anything that gets copied or committed.
-if [ -f "$ENV_FILE" ]; then
-  set -a
-  . "$ENV_FILE"
-  set +a
-else
-  echo "[clearnote] no $ENV_FILE — starting without an API key or calendar credentials"
-fi
 
 PORT="${PORT:-8787}"
 export PORT
