@@ -252,15 +252,24 @@ app.post(
   "/api/names/preview",
   ownOrigin,
   wrap((req, res) => {
-    const latest = db.prepare(`SELECT id FROM meetings ORDER BY started_at DESC LIMIT 1`).get();
-    const m = latest
-      ? getMeeting(latest.id)
-      : { title: "Pricing sync", started_at: Date.now(), platform_label: "Google Meet", spoke: [{ name: "Ana Silva" }, { name: "Ben Ito" }] };
     const b = req.body || {};
-    const parts = Object.fromEntries(
-      Object.keys(PART_KEYS).map((k) => [k, `${fillName(b.audioFileName ?? config.get("audioFileName"), m, { part: b[PART_KEYS[k]] ?? config.get(PART_KEYS[k]) })}.mp3`]),
-    );
-    res.json({ notes: fillName(b.notesDocName ?? config.get("notesDocName"), m), audio: parts, from: latest ? m.title : "a sample meeting" });
+    const latestOf = (calls) =>
+      db
+        .prepare(`SELECT id FROM meetings WHERE platform ${calls ? "" : "NOT "}IN ('google_meet', 'zoom', 'teams') ORDER BY started_at DESC LIMIT 1`)
+        .get();
+    const sample = {
+      call: { title: "Pricing sync", started_at: Date.now(), platform: "google_meet", platform_label: "Google Meet", spoke: [{ name: "Ana Silva" }, { name: "Ben Ito" }] },
+      other: { title: "How transformers work", started_at: Date.now(), platform: "youtube", platform_label: "YouTube", spoke: [] },
+    };
+    const example = (kind, docKey, audioKey) => {
+      const row = latestOf(kind === "call");
+      const m = row ? getMeeting(row.id) : sample[kind];
+      const audio = Object.fromEntries(
+        Object.keys(PART_KEYS).map((k) => [k, `${fillName(b[audioKey] ?? config.get(audioKey), m, { part: b[PART_KEYS[k]] ?? config.get(PART_KEYS[k]) })}.mp3`]),
+      );
+      return { notes: fillName(b[docKey] ?? config.get(docKey), m), audio, from: row ? m.title : "a sample" };
+    };
+    res.json({ call: example("call", "notesDocName", "audioFileName"), other: example("other", "notesDocNameOther", "audioFileNameOther") });
   }),
 );
 

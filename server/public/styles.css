@@ -108,6 +108,7 @@ sl-tab-panel::part(base) { padding: 0 0 0 var(--sl-spacing-large); }
 .tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .tags sl-button::part(label) { font-family: var(--sl-font-mono); }
 .names { display: grid; grid-template-columns: minmax(0, 170px) minmax(0, 1fr); gap: 8px 14px; align-items: start; }
+.names .names-head { grid-column: 1 / -1; margin: 10px 0 0; font-size: var(--sl-font-size-medium); }
 .names .example { grid-column: 2; font-size: var(--sl-font-size-small); color: var(--muted); margin-top: -4px; }
 .parts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .dirs { max-height: 320px; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--sl-border-radius-medium); padding: 4px; }

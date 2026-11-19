@@ -13,8 +13,8 @@ const people = await import("../people.js");
 
 config.update({ displayName: "Scott" });
 
-function meeting(title, at, speakers, attendees) {
-  const id = openMeeting({ meetingKey: `${title}-${at}`, platform: "meet", platformLabel: "Google Meet", title, url: "", startedAt: at });
+function meeting(title, at, speakers, attendees, platform = "google_meet") {
+  const id = openMeeting({ meetingKey: `${title}-${at}`, platform, platformLabel: platform, title, url: "", startedAt: at });
   closeMeeting(id, { endedAt: at + 1800e3, speakers });
   if (attendees) {
     const ev = `ev-${title}`;
@@ -69,4 +69,9 @@ test("merging folds meetings and names together", () => {
   // and the next captions-only call as "Benny" lands on Ben
   meeting("Another", 4_000_000, ["Benny"]);
   assert.equal(people.getPerson(ben.id).meetings.length, 3);
+});
+
+test("speakers in a YouTube video don't become people", () => {
+  meeting("Never Gonna Give You Up", Date.UTC(2026, 10, 19), ["Rick Astley"], null, "youtube");
+  assert.ok(!people.listPeople().some((p) => p.name === "Rick Astley"));
 });

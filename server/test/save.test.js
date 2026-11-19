@@ -14,7 +14,7 @@ const { tabRequests } = await import("../drive.js");
 
 const meeting = {
   title: "Pricing sync",
-  platform: "meet",
+  platform: "google_meet",
   platform_label: "Google Meet",
   started_at: new Date(2026, 10, 19, 14, 5).getTime(),
   ended_at: new Date(2026, 10, 19, 14, 35).getTime(),
@@ -92,4 +92,11 @@ test("part names and tab names come from Settings", () => {
   assert.equal(notes.title, "Summary");
   assert.equal(transcript.title, "Full transcript");
   config.update({ partMixed: "mixed", tabNotesName: "Notes", tabTranscriptName: "Transcript" });
+});
+
+test("YouTube and website captures use their own name pattern", () => {
+  const yt = { ...meeting, platform: "youtube", platform_label: "YouTube", title: "How transformers work" };
+  assert.match(docName(yt), /^How transformers work – YouTube – /);
+  assert.match(audioName(yt, "mixed"), /^How transformers work – YouTube – .* – .*\.mp3$/);
+  assert.doesNotMatch(docName(meeting), / – Google Meet – /);
 });

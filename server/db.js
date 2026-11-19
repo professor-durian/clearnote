@@ -8,6 +8,10 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const file = process.env.CLEARNOTE_DB || path.join(here, "clearnote.db");
 
 export const db = new Database(file);
+
+// Calls have attendees; everything else captured (YouTube, websites) doesn't.
+export const CALL_PLATFORMS = ["google_meet", "zoom", "teams"];
+export const isCall = (m) => CALL_PLATFORMS.includes(m?.platform);
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 

@@ -18,6 +18,7 @@ const FILE = process.env.CLEARNOTE_SETTINGS || path.join(os.homedir(), ".clearno
 export const FIELDS = {
   // capture (read by the extension)
   displayName: { default: "" },
+  showActionItems: { default: true }, // "Action items" in the dashboard's top menu
   autoCapture: { default: true },
   hideCaptions: { default: true },
   recordMic: { default: true },
@@ -51,6 +52,9 @@ export const FIELDS = {
   // Name templates. Tags: {title} {date} {time} {year} {month} {day} {platform} {people} {part}
   notesDocName: { default: "{title} – {date} {time} – Notes by ClearNote" },
   audioFileName: { default: "{title} – {date} {time} – {part}" },
+  // The same, for captures that aren't calls (YouTube, websites)
+  notesDocNameOther: { default: "{title} – {platform} – {date} – ClearNote" },
+  audioFileNameOther: { default: "{title} – {platform} – {date} – {part}" },
   tabNotesName: { default: "Notes" },
   tabTranscriptName: { default: "Transcript" },
   partMixed: { default: "mixed" },

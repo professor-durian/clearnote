@@ -6,7 +6,7 @@
 // name a person has appeared under is kept as an alias, so "Ben" in captions and
 // "Benjamin Ito" on the invite can be merged into one person and stay merged.
 
-import { db, getMeeting } from "./db.js";
+import { db, getMeeting, isCall } from "./db.js";
 import * as config from "./config.js";
 
 db.exec(`
@@ -82,6 +82,11 @@ export function resolvePerson(name, email) {
 export function syncMeetingPeople(meetingId) {
   const m = getMeeting(meetingId);
   if (!m) return;
+  // People are the attendees of calls. A YouTube speaker isn't someone you met.
+  if (!isCall(m)) {
+    db.prepare(`DELETE FROM meeting_people WHERE meeting_id = ?`).run(meetingId);
+    return;
+  }
   const rows = new Map();
   const put = (person, patch) => {
     const cur = rows.get(person.id) || { spoke: 0, invited: 0, response: null };
@@ -132,7 +137,7 @@ export function listPeople({ q = "", sort = "meetings", includeHidden = false } 
          FROM people p
          JOIN meeting_people mp ON mp.person_id = p.id
          JOIN meetings m ON m.id = mp.meeting_id
-        WHERE (? OR p.hidden = 0)
+        WHERE (? OR p.hidden = 0) AND m.platform IN ('google_meet', 'zoom', 'teams')
         GROUP BY p.id`,
     )
     .all(includeHidden ? 1 : 0);

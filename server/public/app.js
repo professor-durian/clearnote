@@ -111,10 +111,10 @@ async function runAction(action, m) {
       if (r.ok) notify("Sent.", "success");
       else notify(`Not sent: ${r.error}`, "danger");
     } else if (action === "delete") {
-      const label = m.title || "Untitled meeting";
+      const label = m.title || `Untitled ${noun(m)}`;
       if (!confirm(`Delete “${label}”?\n\nThe transcript, audio, action items and search entries go with it. Copies already saved to Drive stay there. This cannot be undone.`)) return;
       await api(`/meetings/${m.id}`, { method: "DELETE" });
-      notify("Meeting deleted.");
+      notify("Deleted.");
       if (location.hash.startsWith("#/m/")) return void (location.hash = "#/");
     }
     route();
@@ -128,7 +128,7 @@ function actionMenu(m, { compact = true } = {}) {
   return `<sl-dropdown placement="bottom-end" hoist data-menu="${esc(m.id)}">
     ${
       compact
-        ? `<sl-icon-button slot="trigger" name="three-dots" label="Actions for ${esc(m.title || "this meeting")}"></sl-icon-button>`
+        ? `<sl-icon-button slot="trigger" name="three-dots" label="Actions for ${esc(m.title || `this ${noun(m)}`)}"></sl-icon-button>`
         : `<sl-button slot="trigger" caret>More</sl-button>`
     }
     <sl-menu>
@@ -151,12 +151,26 @@ function wireMenus(byId) {
   }
 }
 
-// ------------------------------------------------------------ meetings list
+// ------------------------------------------------------------ captures list
 
 let listFilter = "all";
+let sourceFilter = "all";
+
+// Where a capture came from. Calls have attendees; the rest don't.
+const SOURCES = {
+  google_meet: "Google Meet",
+  zoom: "Zoom",
+  teams: "Microsoft Teams",
+  youtube: "YouTube",
+  web: "Other websites",
+};
+const CALLS = ["google_meet", "zoom", "teams"];
+const isCallCapture = (m) => CALLS.includes(m.platform);
+const sourceOf = (m) => (SOURCES[m.platform] && m.platform !== "web" ? SOURCES[m.platform] : "Website");
+const noun = (m) => (isCallCapture(m) ? "meeting" : "capture");
 
 async function renderList({ q, tag: tagName, person } = {}) {
-  view.innerHTML = loading("Loading meetings…");
+  view.innerHTML = loading("Loading captures…");
   const params = new URLSearchParams();
   if (q) params.set("q", q);
   if (tagName) params.set("tag", tagName);
@@ -164,14 +178,14 @@ async function renderList({ q, tag: tagName, person } = {}) {
   const [all, everyone] = await Promise.all([api(`/meetings?${params}`), api("/people?sort=meetings")]);
   const picked = person ? person.split(",") : [];
 
-  const title = q ? `Results for “${esc(q)}”` : tagName ? `Tagged “${esc(tagName)}” <a href="#/" class="small">clear</a>` : "Meetings";
+  const title = q ? `Results for “${esc(q)}”` : tagName ? `Tagged “${esc(tagName)}” <a href="#/" class="small">clear</a>` : "Captures";
   const peoplePicker = everyone.length
     ? `<sl-select id="pfilter" multiple clearable size="small" placeholder="Filter by people" max-options-visible="2" value="${esc(picked.join(" "))}" style="min-width:240px" hoist>
         ${everyone.map((p) => `<sl-option value="${p.id}">${esc(p.name)} (${p.meetings})</sl-option>`).join("")}
       </sl-select>`
     : "";
   if (!all.length && picked.length) {
-    view.innerHTML = `<h1>Meetings</h1><div class="row" style="margin-bottom:12px">${peoplePicker}</div>
+    view.innerHTML = `<h1>Captures</h1><div class="row" style="margin-bottom:12px">${peoplePicker}</div>
       <div class="empty"><b>No meetings with everyone you picked.</b><br/>Remove someone from the filter.</div>`;
     wirePeopleFilter();
     return;
@@ -180,8 +194,8 @@ async function renderList({ q, tag: tagName, person } = {}) {
     view.innerHTML = `<h1>${title}</h1><div class="empty">${
       q || tagName
         ? "<b>Nothing matched.</b><br/>Try another term."
-        : `<b>No meetings captured yet.</b><br/>Join a Google Meet, Zoom or Teams call in Chrome with the extension installed.
-           The transcript lands here when the call ends.`
+        : `<b>Nothing captured yet.</b><br/>Join a Google Meet, Zoom or Teams call in Chrome with the extension installed, or click the
+           ClearNote icon on a YouTube video or any page playing sound. The transcript lands here when it ends.`
     }</div>`;
     return;
   }
@@ -192,14 +206,28 @@ async function renderList({ q, tag: tagName, person } = {}) {
     unsaved: ["Not saved", (m) => !m.saved?.savedAt],
     problems: ["Problems", (m) => m.audioStatus === "failed" || m.status === "failed" || m.saved?.error],
   };
-  const shown = all.filter(filters[listFilter][1]);
+  // Sources offered: the usual ones, plus any others actually captured.
+  const sourceKeys = Object.keys(SOURCES);
+  const bySource = (m) =>
+    sourceFilter === "all" ||
+    (sourceFilter === "calls" ? isCallCapture(m) : (SOURCES[m.platform] ? m.platform : "web") === sourceFilter);
+  const shown = all.filter((m) => filters[listFilter][1](m) && bySource(m));
+  const counts = (k) => all.filter((m) => (k === "calls" ? isCallCapture(m) : (SOURCES[m.platform] ? m.platform : "web") === k)).length;
+  const sourcePicker = `<sl-select id="sfilter" size="small" value="${sourceFilter}" style="min-width:200px" hoist>
+      <sl-option value="all">All sources (${all.length})</sl-option>
+      <sl-option value="calls">All calls (${counts("calls")})</sl-option>
+      ${sourceKeys.map((k) => `<sl-option value="${k}">${SOURCES[k]} (${counts(k)})</sl-option>`).join("")}
+    </sl-select>`;
 
   view.innerHTML = `
     <div class="row" style="align-items:flex-end;margin-bottom:16px">
       <div style="flex:1 1 300px">
         <h1>${title}</h1>
-        <p class="sub" style="margin:0">${all.length} meeting${all.length === 1 ? "" : "s"}. Open one, or use ⋯ to redo a step.</p>
+        <p class="sub" style="margin:0">${all.length} capture${all.length === 1 ? "" : "s"}${
+          shown.length !== all.length ? `, ${shown.length} shown` : ""
+        }. Open one, or use ⋯ to redo a step.</p>
       </div>
+      ${sourcePicker}
       ${peoplePicker}
       <sl-radio-group id="filter" value="${listFilter}" size="small">
         ${Object.entries(filters).map(([k, [label]]) => `<sl-radio-button value="${k}">${label}</sl-radio-button>`).join("")}
@@ -208,7 +236,7 @@ async function renderList({ q, tag: tagName, person } = {}) {
     <div class="tablebox">
       <table class="meetings">
         <thead><tr>
-          <th>Meeting</th><th>When</th><th>People</th><th>Transcript</th><th>Audio</th><th>Summary</th><th>Drive</th><th><span class="sr">Actions</span></th>
+          <th>Capture</th><th>Source</th><th>When</th><th>People</th><th>Transcript</th><th>Audio</th><th>Summary</th><th>Drive</th><th><span class="sr">Actions</span></th>
         </tr></thead>
         <tbody>
           ${
@@ -218,12 +246,15 @@ async function renderList({ q, tag: tagName, person } = {}) {
                     const st = statusOf(m);
                     return `<tr>
                       <td>
-                        <a class="mtitle" href="#/m/${esc(m.id)}">${esc(m.title || "Untitled meeting")}</a>
-                        <div class="headline">${esc(m.summary?.headline || m.platform_label || m.platform)}</div>
+                        <a class="mtitle" href="#/m/${esc(m.id)}">${esc(m.title || `Untitled ${noun(m)}`)}</a>
+                        ${m.summary?.headline ? `<div class="headline">${esc(m.summary.headline)}</div>` : ""}
                       </td>
+                      <td>${tag(sourceOf(m), "neutral")}</td>
                       <td style="white-space:nowrap">${when(m.started_at)}<div class="muted small">${duration(m)}${m.sync_device ? ` · ${esc(m.sync_device)}` : ""}</div></td>
                       <td>${
-                        m.people?.length
+                        !isCallCapture(m)
+                          ? `<span class="muted">—</span>`
+                          : m.people?.length
                           ? m.people.slice(0, 3).map((p) => `<a href="#/people/${p.id}" class="plink">${esc(p.name)}</a>`).join(", ") +
                             (m.people.length > 3 ? ` <span class="muted">+${m.people.length - 3}</span>` : "")
                           : m.participants.length
@@ -238,7 +269,7 @@ async function renderList({ q, tag: tagName, person } = {}) {
                     </tr>`;
                   })
                   .join("")
-              : `<tr><td colspan="8" class="muted" style="padding:24px 16px">Nothing in this view.</td></tr>`
+              : `<tr><td colspan="9" class="muted" style="padding:24px 16px">Nothing in this view.</td></tr>`
           }
         </tbody>
       </table>
@@ -246,6 +277,10 @@ async function renderList({ q, tag: tagName, person } = {}) {
 
   document.getElementById("filter").addEventListener("sl-change", (e) => {
     listFilter = e.target.value;
+    route();
+  });
+  document.getElementById("sfilter").addEventListener("sl-change", (e) => {
+    sourceFilter = e.target.value;
     route();
   });
   wireMenus((id) => all.find((m) => m.id === id));
@@ -281,7 +316,7 @@ const RECORD_TYPE = {
 };
 
 async function renderMeeting(id, tabName = "notes") {
-  view.innerHTML = loading("Loading meeting…");
+  view.innerHTML = loading("Loading…");
   const m = await api(`/meetings/${id}`);
   const s = m.summary || {};
   const st = statusOf(m);
@@ -289,11 +324,11 @@ async function renderMeeting(id, tabName = "notes") {
   const hasSummary = !!(s.tldr || s.headline);
 
   view.innerHTML = `
-    <a href="#/" class="small">← Meetings</a>
+    <a href="#/" class="small">← Captures</a>
     <div class="mhead">
       <div class="info">
-        <label class="sr" for="mtitle">Meeting title</label>
-        <input class="edit-title" id="mtitle" value="${esc(m.title || "Untitled meeting")}" />
+        <label class="sr" for="mtitle">Title</label>
+        <input class="edit-title" id="mtitle" value="${esc(m.title || `Untitled ${noun(m)}`)}" />
         <p class="muted" style="margin:4px 0 8px">${esc(m.platform_label || m.platform)} · ${new Date(m.started_at).toLocaleString([], {
           weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
         })} · ${duration(m)}${m.participants.length ? ` · ${esc(m.participants.join(", "))}` : ""}</p>
@@ -334,9 +369,9 @@ async function renderMeeting(id, tabName = "notes") {
       <sl-tab-panel name="audio">${audioPanel(m)}</sl-tab-panel>
       <sl-tab-panel name="ask">
         <div class="panel stack" id="chat">
-          <p class="muted" style="margin:0">Questions are answered from this meeting's transcript only.</p>
+          <p class="muted" style="margin:0">Questions are answered from this ${noun(m)}'s transcript only.</p>
           <form id="askf" class="row" style="gap:8px">
-            <sl-input name="q" placeholder="What did we decide about pricing?" style="flex:1" label="Ask about this meeting"></sl-input>
+            <sl-input name="q" placeholder="What did we decide about pricing?" style="flex:1" label="Ask about this ${noun(m)}"></sl-input>
             <sl-button type="submit" variant="primary" style="align-self:flex-end">Ask</sl-button>
           </form>
         </div>
@@ -489,7 +524,7 @@ function transcriptPanel(m) {
 }
 
 function audioPanel(m) {
-  if (!m.audioTracks?.length) return `<p class="muted">No audio was recorded for this meeting.</p>`;
+  if (!m.audioTracks?.length) return `<p class="muted">No audio was recorded for this ${noun(m)}.</p>`;
   const status = {
     recording: "Recording…",
     transcribing: "Transcribing the audio on this computer…",
@@ -596,7 +631,7 @@ function wireMeeting(m) {
       if (!btn) return;
       const seg = m.segments.find((sg) => String(sg.id) === btn.dataset.rename);
       if (!seg) return;
-      const next = prompt(`Rename “${seg.speaker}” everywhere in this meeting:`, seg.speaker);
+      const next = prompt(`Rename “${seg.speaker}” everywhere in this ${noun(m)}:`, seg.speaker);
       if (!next || next === seg.speaker) return;
       await api(`/segments/${seg.id}`, { method: "PATCH", body: JSON.stringify({ speaker: next, renameAll: true }) });
       renderMeeting(m.id, "transcript");
@@ -867,7 +902,7 @@ async function renderSettings(tabName = "general") {
         <sl-tab slot="nav" panel="general">General</sl-tab>
         <sl-tab slot="nav" panel="rules">Rules</sl-tab>
         <sl-tab slot="nav" panel="recording">Recording</sl-tab>
-        <sl-tab slot="nav" panel="ai">AI</sl-tab>
+        <sl-tab slot="nav" panel="ai">AI summaries</sl-tab>
         <sl-tab slot="nav" panel="usage">Usage</sl-tab>
         <sl-tab slot="nav" panel="saving">Saving &amp; names</sl-tab>
         <sl-tab slot="nav" panel="connections">Connections</sl-tab>
@@ -876,9 +911,10 @@ async function renderSettings(tabName = "general") {
         <sl-tab-panel name="general"><div class="panel stack">
           <h2>General</h2>
           ${input("displayName", "Your name", "e.g. Ada Lovelace", "Captions call you “You”. This puts your name in transcripts and notes.")}
-          ${sw("autoCapture", "Capture every meeting automatically", "Captions start when you join a Meet, Zoom or Teams call in Chrome.")}
+          ${sw("autoCapture", "Capture every call automatically", "Captions start when you join a Meet, Zoom or Teams call in Chrome.")}
+          ${sw("showActionItems", "Show Action items in the menu", "Next steps still appear on each capture's page either way.")}
           ${sw("hideCaptions", "Hide the platform's caption overlay", "Captions stay on so ClearNote can read them, but off your screen.")}
-          <p class="field-hint" style="margin:0">What appears on a meeting page, and when ClearNote captures at all, is set per situation in
+          <p class="field-hint" style="margin:0">What appears on a call's page, and when ClearNote captures at all, is set per situation in
             <a href="#/settings/rules">Rules</a>. The ClearNote icon in Chrome's toolbar always shows the state without blinking:
             normal colours while captions are captured, muted red while audio is recorded.</p>
         </div></sl-tab-panel>
@@ -904,7 +940,7 @@ async function renderSettings(tabName = "general") {
 
         <sl-tab-panel name="ai"><div class="panel stack">
           <div class="row"><h2 style="margin:0">AI summaries</h2>${tag(cfg.ai.configured ? `On: ${cfg.ai.order.join(", then ")}` : "Off", cfg.ai.configured ? "success" : "neutral")}</div>
-          <p class="muted" style="margin:0">Summaries, next steps and questions about a meeting. Add a key for either provider. With both, one is tried first and the other if it fails.</p>
+          <p class="muted" style="margin:0">Summaries, next steps and questions about each capture. Separate from transcription, which never uses these. Add a key for either provider. With both, one is tried first and the other if it fails.</p>
           <sl-select data-key="aiPrimary" label="Use first" value="${esc(v.aiPrimary)}">
             <sl-option value="anthropic">Anthropic</sl-option>
             <sl-option value="openrouter">OpenRouter</sl-option>
@@ -924,15 +960,15 @@ async function renderSettings(tabName = "general") {
 
         <sl-tab-panel name="saving"><div class="stack">
           <div class="panel stack">
-            <h2>Where meetings are saved</h2>
+            <h2>Where captures are saved</h2>
             <p class="muted" style="margin:0">Both update automatically when you fix the transcript, add a summary or re-transcribe.</p>
             ${driveNeeded ? `<sl-alert variant="warning" open><sl-icon slot="icon" name="exclamation-triangle"></sl-icon>Saving to Drive needs Google ${status.connected ? "reconnected once to add Drive access" : "connected"}: see <a href="#/settings/connections">Connections</a>.</sl-alert>` : ""}
-            ${sw("saveNotes", "Save meeting notes to Google Drive", "One Google Doc per meeting, like Gemini's notes, with a notes tab and a transcript tab.")}
+            ${sw("saveNotes", "Save notes to Google Drive", "One Google Doc per capture, like Gemini's meeting notes, with a notes tab and a transcript tab. Calls and other captures share the folder.")}
             <div data-show="saveNotes" class="stack">
               ${input("notesFolderName", "Notes folder name", "ClearNote Meeting Notes", "Used when ClearNote creates the folder. Afterwards rename or move it in Drive; ClearNote keeps using it.")}
               ${v.notesFolderId ? `<a href="https://drive.google.com/drive/folders/${esc(v.notesFolderId)}" target="_blank" rel="noreferrer">Open the notes folder in Drive</a>` : ""}
             </div>
-            <sl-radio-group data-key="saveAudio" label="Save audio files" value="${esc(v.saveAudio)}" help-text="Three MP3s per recorded meeting: everyone mixed together, the call alone, and your microphone alone.">
+            <sl-radio-group data-key="saveAudio" label="Save audio files" value="${esc(v.saveAudio)}" help-text="Three MP3s per recording: everything mixed together, the tab's sound alone, and your microphone alone.">
               <sl-radio value="off">Don't save</sl-radio>
               <sl-radio value="drive">To Google Drive</sl-radio>
               <sl-radio value="local">To a folder on this computer</sl-radio>
@@ -953,15 +989,24 @@ async function renderSettings(tabName = "general") {
 
           <div class="panel stack">
             <h2>File names</h2>
-            <p class="muted" style="margin:0">Click a field, then a tag to add it. Examples use your latest meeting.</p>
+            <p class="muted" style="margin:0">Click a field, then a tag to add it. Calls and other captures (YouTube, websites) are named separately; examples use your latest of each.</p>
             <div class="tags">${NAME_TAGS.map((t) => `<sl-button size="small" pill data-tag="${t}">${t}</sl-button>`).join("")}</div>
             <div class="names">
+              <h3 class="names-head">Calls (Meet, Zoom, Teams)</h3>
               <label for="n-notes">Notes Doc</label>
               <sl-input id="n-notes" data-key="notesDocName" data-name value="${esc(v.notesDocName)}"></sl-input>
               <span class="example" id="ex-notes"></span>
               <label for="n-audio">Audio files</label>
               <sl-input id="n-audio" data-key="audioFileName" data-name value="${esc(v.audioFileName)}"></sl-input>
               <span class="example" id="ex-audio"></span>
+              <h3 class="names-head">Other captures (YouTube, websites)</h3>
+              <label for="n-notes2">Notes Doc</label>
+              <sl-input id="n-notes2" data-key="notesDocNameOther" data-name value="${esc(v.notesDocNameOther)}"></sl-input>
+              <span class="example" id="ex-notes2"></span>
+              <label for="n-audio2">Audio files</label>
+              <sl-input id="n-audio2" data-key="audioFileNameOther" data-name value="${esc(v.audioFileNameOther)}"></sl-input>
+              <span class="example" id="ex-audio2"></span>
+              <h3 class="names-head">Both</h3>
               <label for="n-tab1">Doc tab: notes</label>
               <sl-input id="n-tab1" data-key="tabNotesName" value="${esc(v.tabNotesName)}"></sl-input>
               <label for="n-tab2">Doc tab: transcript</label>
@@ -969,7 +1014,7 @@ async function renderSettings(tabName = "general") {
             </div>
             <div class="parts">
               <sl-input data-key="partMixed" data-name label="{part} for everyone" value="${esc(v.partMixed)}"></sl-input>
-              <sl-input data-key="partCall" data-name label="{part} for the call" value="${esc(v.partCall)}"></sl-input>
+              <sl-input data-key="partCall" data-name label="{part} for the tab's sound" value="${esc(v.partCall)}"></sl-input>
               <sl-input data-key="partMic" data-name label="{part} for your mic" value="${esc(v.partMic)}"></sl-input>
             </div>
             <p class="field-hint" style="margin:0">Renaming a tab applies to new notes; existing Docs get the new tab names the next time they're saved.</p>
@@ -991,7 +1036,7 @@ async function renderSettings(tabName = "general") {
                    <div id="calendars"></div>
                    <div class="row"><sl-button id="sync"><sl-icon slot="prefix" name="arrow-repeat"></sl-icon>Sync calendar now</sl-button>
                      <sl-button id="disconnect" variant="danger" outline>Disconnect</sl-button></div>`
-                : `<p class="muted" style="margin:0">Reads your calendar to match each meeting to its event and invitees (it never changes your calendar),
+                : `<p class="muted" style="margin:0">Reads your calendar to match each call to its event and invitees (it never changes your calendar),
                      and saves notes and audio to Drive. In Drive, ClearNote can only see the files it creates.</p>
                    ${
                      status.configured
@@ -1016,29 +1061,29 @@ async function renderSettings(tabName = "general") {
           </div>
           ${status.connected ? `<div class="panel" id="upcoming"></div>` : ""}
           <div class="panel stack">
-            <div class="row"><h2 style="margin:0">Send finished meetings to another app</h2><span id="hookstate"></span></div>
-            <p class="muted" style="margin:0">When a meeting is finished, ClearNote sends it (title, people, summary, next steps and the full transcript) as JSON to this
+            <div class="row"><h2 style="margin:0">Send finished captures to another app</h2><span id="hookstate"></span></div>
+            <p class="muted" style="margin:0">When a capture is finished, ClearNote sends it (title, source, people, summary, next steps and the full transcript) as JSON to this
               address: your own notes system, an automation tool such as Zapier or n8n, or a script. Changes later on, such as a regenerated summary,
-              are sent again. Only the computer that recorded a meeting sends it.</p>
+              are sent again. Only the computer that recorded a capture sends it.</p>
             ${input("webhookUrl", "Address", "https://example.com/clearnote", "Must accept a POST with a JSON body. Leave empty to turn this off.")}
             ${secret("webhookSecret", "Signing secret (optional)", "A long random string the receiver also knows")}
             <p class="field-hint" style="margin:0">With a secret, each request carries <code>X-ClearNote-Signature: sha256=…</code>, an HMAC-SHA256 of the body, so the receiver can check it came from you.</p>
-            <div class="row"><sl-button id="hooktest">Send a test</sl-button><sl-button id="hookpast">Also send past meetings</sl-button><span id="hookresult" class="small"></span></div>
+            <div class="row"><sl-button id="hooktest">Send a test</sl-button><sl-button id="hookpast">Also send past captures</sl-button><span id="hookresult" class="small"></span></div>
           </div>
           <div class="panel stack">
             <div class="row"><h2 style="margin:0">Your other computers</h2><span id="syncstate"></span></div>
-            <p class="muted" style="margin:0">Meetings captured on any of your computers show up on all of them. Each one shares its finished meetings
+            <p class="muted" style="margin:0">Captures from any of your computers show up on all of them. Each one shares what it captured
               (transcript, summary, next steps, people; not audio) through a "ClearNote sync" folder in your Google Drive. Install ClearNote on the other
               computer, paste the same Google client ID and secret, and connect the same Google account.</p>
-            ${sw("syncDrive", "Share meetings with my other computers")}
-            ${input("deviceName", "This computer's name", syncDevice || "", "Shown on meetings recorded here when you look at them on another computer.")}
+            ${sw("syncDrive", "Share captures with my other computers")}
+            ${input("deviceName", "This computer's name", syncDevice || "", "Shown on captures made here when you look at them on another computer.")}
             <div class="row"><sl-button id="syncnow"><sl-icon slot="prefix" name="arrow-repeat"></sl-icon>Sync now</sl-button><span id="synclast" class="muted small"></span></div>
           </div>
         </div></sl-tab-panel>
 
         <sl-tab-panel name="advanced"><div class="panel stack">
           <h2>Advanced</h2>
-          ${sw("debug", "Log capture details to the meeting page's console", "For fixing a meeting platform that stopped capturing.")}
+          ${sw("debug", "Log capture details to the call page's console", "For fixing a call platform that stopped capturing.")}
           <p style="margin:0"><b>Settings file:</b> <code>${esc(cfg.file)}</code></p>
           <p class="muted" style="margin:0">The extension's server address and sync token are set in the extension's own options (right-click the ClearNote icon › Options).</p>
           <h3>Updates</h3>
@@ -1078,7 +1123,11 @@ async function renderSettings(tabName = "general") {
     }
     return patch;
   };
-  const save = (patch = collect()) => api("/settings", { method: "PATCH", body: JSON.stringify(patch) });
+  const save = (patch = collect()) =>
+    api("/settings", { method: "PATCH", body: JSON.stringify(patch) }).then((r) => {
+      applyMenu(r.values);
+      return r;
+    });
 
   const dirty = document.getElementById("dirty");
   const markDirty = () => (dirty.textContent = "Unsaved changes");
@@ -1117,7 +1166,7 @@ async function renderSettings(tabName = "general") {
     await save();
     await api("/webhook/send-past", { method: "POST", body: "{}" });
     e.target.loading = false;
-    document.getElementById("hookresult").innerHTML = tag("Sending every past meeting in the background", "primary");
+    document.getElementById("hookresult").innerHTML = tag("Sending every past capture in the background", "primary");
     setTimeout(showHook, 5000);
   };
   showSync(sync);
@@ -1187,8 +1236,10 @@ async function renderSettings(tabName = "general") {
       for (const el of view.querySelectorAll("[data-name]")) body[el.dataset.key] = el.value;
       try {
         const r = await api("/names/preview", { method: "POST", body: JSON.stringify(body) });
-        document.getElementById("ex-notes").textContent = `Example: ${r.notes}`;
-        document.getElementById("ex-audio").textContent = `Example: ${r.audio.mixed}, ${r.audio.call}, ${r.audio.mic}`;
+        document.getElementById("ex-notes").textContent = `Example: ${r.call.notes}`;
+        document.getElementById("ex-audio").textContent = `Example: ${r.call.audio.mixed}, ${r.call.audio.call}, ${r.call.audio.mic}`;
+        document.getElementById("ex-notes2").textContent = `Example: ${r.other.notes}`;
+        document.getElementById("ex-audio2").textContent = `Example: ${r.other.audio.mixed}, ${r.other.audio.call}, ${r.other.audio.mic}`;
       } catch {
         /* preview is a nicety */
       }
@@ -1387,7 +1438,7 @@ async function loadUsage() {
       ${
         r.recent.length
           ? `<div class="tablebox" style="border:0"><table class="meetings" style="min-width:760px"><thead><tr>
-              <th>When</th><th>Meeting</th><th>Task</th><th>Model</th><th>Tokens in / out</th><th style="text-align:right">Cost</th></tr></thead><tbody>
+              <th>When</th><th>Capture</th><th>Task</th><th>Model</th><th>Tokens in / out</th><th style="text-align:right">Cost</th></tr></thead><tbody>
               ${r.recent
                 .map(
                   (u) => `<tr>
@@ -1421,7 +1472,7 @@ async function loadConnections() {
       } else {
         const sel = new Set(r.selected);
         box.innerHTML = `<h3 style="margin-top:4px">Calendars to read</h3>
-          <p class="field-hint" style="margin:0 0 6px">Meetings are matched only against these. Untick personal calendars to keep them out.</p>
+          <p class="field-hint" style="margin:0 0 6px">Calls are matched only against these. Untick personal calendars to keep them out.</p>
           <div class="stack" style="gap:6px">${r.calendars
             .map(
               (c) => `<sl-checkbox data-cal="${esc(c.primary ? "primary" : c.id)}" ${sel.has(c.id) || (c.primary && sel.has("primary")) ? "checked" : ""}>
@@ -1550,7 +1601,7 @@ async function renderPeople() {
                 <td>${p.spoke}</td>
                 <td style="white-space:nowrap">${when(p.last_met)}</td>
                 <td style="white-space:nowrap" class="muted">${new Date(p.first_met).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" })}</td>
-                <td style="text-align:right"><sl-button size="small" href="#/?person=${p.id}">Meetings</sl-button></td>
+                <td style="text-align:right"><sl-button size="small" href="#/?person=${p.id}">Their calls</sl-button></td>
               </tr>`,
             )
             .join("")}
@@ -1584,7 +1635,7 @@ async function renderPerson(id) {
         ${p.hidden ? tag("Hidden from People", "warning") : ""}
       </div>
       <div class="row">
-        <sl-button href="#/?person=${p.id}"><sl-icon slot="prefix" name="funnel"></sl-icon>Filter meetings</sl-button>
+        <sl-button href="#/?person=${p.id}"><sl-icon slot="prefix" name="funnel"></sl-icon>Show their calls in Captures</sl-button>
         <sl-dropdown placement="bottom-end" hoist id="pmore">
           <sl-icon-button slot="trigger" name="three-dots" label="More"></sl-icon-button>
           <sl-menu>
@@ -1683,10 +1734,10 @@ async function renderActions() {
   view.innerHTML = loading("Loading action items…");
   const items = await api("/action-items");
   if (!items.length) {
-    view.innerHTML = `<h1>Action items</h1><div class="empty"><b>Nothing open.</b><br/>Next steps from your meetings show up here.</div>`;
+    view.innerHTML = `<h1>Action items</h1><div class="empty"><b>Nothing open.</b><br/>Next steps from your captures show up here.</div>`;
     return;
   }
-  view.innerHTML = `<h1>Action items</h1><p class="sub">${items.length} open across all meetings</p>
+  view.innerHTML = `<h1>Action items</h1><p class="sub">${items.length} open across all captures</p>
     <div class="panel" id="actions">${items
       .map(
         (a) => `<div class="ai-item" data-id="${a.id}">
@@ -1742,6 +1793,13 @@ qInput.addEventListener("sl-input", () => {
     location.hash = q ? `#/search/${encodeURIComponent(q)}` : "#/";
   }, 280);
 });
+
+// "Action items" in the top menu is optional (Settings › General).
+function applyMenu(values) {
+  const link = document.getElementById("nav-actions");
+  if (link && values) link.hidden = values.showActionItems === false;
+}
+api("/settings").then((c) => applyMenu(c.values)).catch(() => {});
 
 checkUpdates();
 setInterval(checkUpdates, 30 * 60 * 1000);

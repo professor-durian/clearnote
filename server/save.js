@@ -10,7 +10,7 @@ import { copyFileSync, mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { db, getMeeting } from "./db.js";
+import { db, getMeeting, isCall } from "./db.js";
 import { audioFields, AUDIO_DIR } from "./audio.js";
 import * as config from "./config.js";
 import * as drive from "./drive.js";
@@ -74,10 +74,13 @@ export function fillName(template, m, extra = {}) {
 
 export const PART_KEYS = { mixed: "partMixed", call: "partCall", mic: "partMic" };
 
-export function docName(m, template = config.get("notesDocName")) {
+// Calls and other captures (YouTube, websites) each have their own name pattern.
+const nameKey = (m, kind) => (isCall(m) ? kind : `${kind}Other`);
+
+export function docName(m, template = config.get(nameKey(m, "notesDocName"))) {
   return fillName(template, m);
 }
-export function audioName(m, part, template = config.get("audioFileName")) {
+export function audioName(m, part, template = config.get(nameKey(m, "audioFileName"))) {
   const label = config.get(PART_KEYS[part] || "") || part;
   return `${fillName(template, m, { part: label })}.mp3`;
 }

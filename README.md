@@ -305,15 +305,15 @@ tools/fixture-replay.js    the recording replayer
 tools/make-icons.mjs       draws the icon and writes every size
 ```
 
-## Send finished meetings to another app
+## Send finished captures to another app
 
-Settings › Connections › *Send finished meetings to another app* takes a web
+Settings › Connections › *Send finished captures to another app* takes a web
 address. When a meeting is finished (ended, summarised, audio transcribed),
 ClearNote POSTs it there as JSON. If it changes later (a regenerated summary, a
 corrected line, an edited title) it is sent again. Failed deliveries are retried
 after 1, 2, 4 … minutes, up to every 6 hours. Only the computer that recorded a
 meeting sends it, so synced computers don't deliver it twice. A new address
-starts from now; *Also send past meetings* sends the rest.
+starts from now; *Also send past captures* sends the rest.
 
 Headers:
 
