@@ -7,8 +7,7 @@
 // the shape is defined once, below, and every size comes from it. PNGs are
 // encoded by hand (zlib is built in) so this needs no dependencies.
 //
-// The mark: a rounded tile in the product's blue, carrying three white bars —
-// lines of transcript. Deliberately plain, because the icon is read at 16px in
+// The mark: a rounded teal tile carrying a white sound wave. Deliberately plain, because the icon is read at 16px in
 // a toolbar far more often than it is admired at 128.
 
 import fs from "node:fs";
@@ -23,29 +22,24 @@ const root = path.join(here, "..");
 // Everything is in a 0..1 square, so one definition serves every size.
 
 const TILE = { inset: 0.035, radius: 0.205 };
-// Tuned for the 16px toolbar rendering, where thin bars turn to mush and a
-// large corner radius reads as a circle rather than a tile.
-const BAR_H = 0.128;
-const BAR_GAP = 0.068;
-const BAR_X = 0.225;
-const BAR_WIDTHS = [0.55, 0.55, 0.34];
+// A sound wave: four rounded vertical bars of different heights. Wide bars
+// with real gaps, so it still reads as a wave at 16px in the toolbar.
+const BAR_W = 0.1;
+const BAR_GAP = 0.05;
+const HEIGHTS = [0.2, 0.48, 0.32, 0.56];
+const LEFT = (1 - (HEIGHTS.length * BAR_W + (HEIGHTS.length - 1) * BAR_GAP)) / 2;
 
-const TOP = (() => {
-  const total = BAR_WIDTHS.length * BAR_H + (BAR_WIDTHS.length - 1) * BAR_GAP;
-  return (1 - total) / 2;
-})();
-
-const BARS = BAR_WIDTHS.map((w, i) => ({
-  x: BAR_X,
-  y: TOP + i * (BAR_H + BAR_GAP),
-  w,
-  h: BAR_H,
-  r: BAR_H / 2,
+const BARS = HEIGHTS.map((h, i) => ({
+  x: LEFT + i * (BAR_W + BAR_GAP),
+  y: (1 - h) / 2,
+  w: BAR_W,
+  h,
+  r: BAR_W / 2,
 }));
 
-// Brand blues: the light end of the gradient is the dashboard's accent-2.
-const C1 = [0x7a, 0xd7, 0xff];
-const C2 = [0x2f, 0x6d, 0xf6];
+// A deep teal: distinct from Google's blue Docs and Meet icons in the toolbar.
+const C1 = [0x0f, 0x6e, 0x56];
+const C2 = [0x0f, 0x6e, 0x56];
 
 const inRoundedRect = (px, py, x, y, w, h, r) => {
   const cx = Math.min(Math.max(px, x + r), x + w - r);
@@ -168,15 +162,9 @@ function svg() {
   ).join("\n");
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="ClearNote">
-  <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#7ad7ff"/>
-      <stop offset="1" stop-color="#2f6df6"/>
-    </linearGradient>
-  </defs>
   <rect x="${pct(i)}" y="${pct(i)}" width="${pct(side)}" height="${pct(side)}" rx="${pct(
     TILE.radius,
-  )}" fill="url(#g)"/>
+  )}" fill="#0f6e56"/>
 ${bars}
 </svg>
 `;

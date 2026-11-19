@@ -146,12 +146,18 @@ async function setIconState(state) {
       const ctx = canvas.getContext("2d");
       if (state === "idle") ctx.filter = "grayscale(1) opacity(0.75)";
       ctx.drawImage(bmp, 0, 0, size, size);
+      const img = ctx.getImageData(0, 0, size, size);
       if (state === "recording") {
-        ctx.globalCompositeOperation = "source-atop";
-        ctx.fillStyle = "rgba(185, 64, 64, 0.85)";
-        ctx.fillRect(0, 0, size, size);
+        // Turn the tile muted red but keep the white wave white: each pixel's
+        // whiteness (its smallest channel) decides how much red it keeps.
+        const RED = [185, 64, 64];
+        const d = img.data;
+        for (let p = 0; p < d.length; p += 4) {
+          const t = Math.min(1, Math.max(0, (Math.min(d[p], d[p + 1], d[p + 2]) - 15) / 240));
+          for (let k = 0; k < 3; k++) d[p + k] = Math.round(RED[k] + (255 - RED[k]) * t);
+        }
       }
-      imageData[size] = ctx.getImageData(0, 0, size, size);
+      imageData[size] = img;
     }
     await chrome.action.setIcon({ imageData });
   } catch (err) {
