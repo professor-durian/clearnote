@@ -238,7 +238,13 @@
     diag.segmenter = segmenter;
     startObserving();
     capturing = true;
-    if (isTop) paint({ status: "capturing", statusText: "Capturing" });
+    if (isTop) {
+      paint({
+        status: "capturing",
+        statusText: "Capturing",
+        note: "To add audio: click the ClearNote icon, then Record audio (or Option+Shift+R).",
+      });
+    }
     watchForEnd();
   }
 
@@ -320,6 +326,19 @@
       });
     }
   }
+
+  // Audio recording is started from the extension icon; reflect it here.
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg?.type !== "recordingState" || !isTop) return;
+    const { on, mic, error } = msg.payload || {};
+    paint({
+      note: error
+        ? error
+        : on
+          ? `Recording audio${mic ? " and your mic" : ""}. Stop from the ClearNote icon or Option+Shift+R.`
+          : "Audio recording stopped. Captions continue.",
+    });
+  });
 
   boot().catch((err) => {
     console.error("[ClearNote] boot failed", err);

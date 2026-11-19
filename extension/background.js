@@ -12,14 +12,46 @@ const DEFAULTS = {
   autoCapture: true,
   hideCaptions: true,
   debug: false,
+  recordMic: true,
 };
 
 const QUEUE_KEY = "cn_queue";
 const CLAIMS_KEY = "cn_claims";
 
+// Connection details (server address, token) live in Chrome. Everything else
+// (your name, capture options) lives in the dashboard's Settings, so there is
+// one place to change it; the last copy fetched is kept for when the server is
+// down.
+const SERVER_SETTINGS_KEY = "cn_server_settings";
+const SERVER_FIELDS = ["displayName", "autoCapture", "hideCaptions", "recordMic", "debug"];
+
 async function settings() {
-  const s = await chrome.storage.sync.get(DEFAULTS);
-  return { ...DEFAULTS, ...s };
+  const local = { ...DEFAULTS, ...(await chrome.storage.sync.get(DEFAULTS)) };
+  let remote = null;
+  try {
+    const res = await fetch(`${local.serverUrl.replace(/\/$/, "")}/api/extension-settings`, {
+      signal: AbortSignal.timeout(2500),
+    });
+    if (res.ok) {
+      remote = await res.json();
+      // One-time move: a name typed into the old extension options goes to the server.
+      if (!remote.displayName && local.displayName) {
+        await fetch(`${local.serverUrl.replace(/\/$/, "")}/api/settings`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ displayName: local.displayName }),
+        }).catch(() => {});
+        remote.displayName = local.displayName;
+      }
+      await chrome.storage.local.set({ [SERVER_SETTINGS_KEY]: remote });
+    }
+  } catch {
+    /* server down: use the last copy */
+  }
+  if (!remote) ({ [SERVER_SETTINGS_KEY]: remote = {} } = await chrome.storage.local.get(SERVER_SETTINGS_KEY));
+  const merged = { ...local };
+  for (const k of SERVER_FIELDS) if (remote[k] !== undefined) merged[k] = remote[k];
+  return merged;
 }
 
 async function api(path, body, method = "POST") {
@@ -105,10 +137,11 @@ const handlers = {
     return { owner: true };
   },
 
-  async startSession(payload) {
+  async startSession(payload, sender) {
     // Created synchronously so the content script gets a real id to stream to.
     try {
       const { id } = await api("/api/sessions", payload);
+      await rememberTabSession(sender.tab?.id, { sessionId: id, startedAt: payload.startedAt });
       await chrome.action.setBadgeText({ text: "REC" });
       await chrome.action.setBadgeBackgroundColor({ color: "#3ddc84" });
       return { sessionId: id };
@@ -117,6 +150,7 @@ const handlers = {
       // Fall back to the deterministic key; the server upserts on it, so the
       // queued segments still land in the right meeting once it comes back.
       await enqueue({ path: "/api/sessions", body: payload });
+      await rememberTabSession(sender.tab?.id, { sessionId: payload.meetingKey, startedAt: payload.startedAt });
       return { sessionId: payload.meetingKey };
     }
   },
@@ -130,13 +164,41 @@ const handlers = {
     return { ok: true };
   },
 
-  async endSession(payload) {
+  async endSession(payload, sender) {
+    const { displayName } = await settings();
+    payload = { ...payload, myName: displayName || "" };
+    const rec = await recording();
+    if (rec && rec.tabId === sender.tab?.id) await stopRecording("call_ended");
     await enqueue({
       path: `/api/sessions/${encodeURIComponent(payload.sessionId)}/end`,
       body: payload,
     });
     await drain();
     await chrome.action.setBadgeText({ text: "" });
+    return { ok: true };
+  },
+
+  // Audio: started from the popup (a click on the extension is the gesture
+  // Chrome requires before it lets an extension capture a tab's sound).
+  async tabState({ tabId }) {
+    const { [SESSIONS_KEY]: sessions = {} } = await chrome.storage.session.get(SESSIONS_KEY);
+    const rec = await recording();
+    return { session: sessions[tabId] || null, recording: rec?.tabId === tabId ? rec : null, busy: !!rec && rec.tabId !== tabId };
+  },
+
+  async startRecording({ tabId, streamId }) {
+    return startRecording(tabId, streamId);
+  },
+
+  async stopRecording() {
+    await stopRecording("stopped");
+    return { ok: true };
+  },
+
+  async recordingStopped() {
+    const rec = await recording();
+    await chrome.storage.session.remove(REC_KEY);
+    if (rec) notifyTab(rec.tabId, false);
     return { ok: true };
   },
 
@@ -161,6 +223,7 @@ const handlers = {
 };
 
 chrome.runtime.onMessage.addListener((msg, sender, respond) => {
+  if (msg?.target === "offscreen") return false;
   const fn = handlers[msg?.type];
   if (!fn) return false;
   Promise.resolve(fn(msg.payload || {}, sender))
@@ -170,4 +233,89 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
       respond({ error: err.message });
     });
   return true; // async response
+});
+
+// ---------------------------------------------------------------- audio
+
+const SESSIONS_KEY = "cn_tab_sessions";
+const REC_KEY = "cn_recording";
+
+async function rememberTabSession(tabId, info) {
+  if (tabId == null) return;
+  const { [SESSIONS_KEY]: sessions = {} } = await chrome.storage.session.get(SESSIONS_KEY);
+  sessions[tabId] = info;
+  await chrome.storage.session.set({ [SESSIONS_KEY]: sessions });
+}
+
+async function recording() {
+  const { [REC_KEY]: rec = null } = await chrome.storage.session.get(REC_KEY);
+  return rec;
+}
+
+function notifyTab(tabId, on, extra = {}) {
+  chrome.tabs.sendMessage(tabId, { type: "recordingState", payload: { on, ...extra } }).catch(() => {});
+}
+
+async function ensureOffscreen() {
+  const existing = await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"] });
+  if (existing.length) return;
+  await chrome.offscreen.createDocument({
+    url: "offscreen.html",
+    reasons: ["USER_MEDIA"],
+    justification: "Record the meeting tab and microphone for local transcription.",
+  });
+}
+
+async function startRecording(tabId, streamId) {
+  const { [SESSIONS_KEY]: sessions = {} } = await chrome.storage.session.get(SESSIONS_KEY);
+  const session = sessions[tabId];
+  if (!session) return { ok: false, error: "ClearNote has not started capturing this call yet." };
+  if (await recording()) return { ok: false, error: "Already recording another tab." };
+  if (!streamId) streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+
+  const s = await settings();
+  await ensureOffscreen();
+  const res = await chrome.runtime.sendMessage({
+    target: "offscreen",
+    type: "start",
+    payload: {
+      streamId,
+      sessionId: session.sessionId,
+      startedAt: session.startedAt,
+      serverUrl: s.serverUrl,
+      token: s.token,
+      myName: s.displayName || "",
+      withMic: s.recordMic !== false,
+    },
+  });
+  if (!res?.ok) return { ok: false, error: res?.error || "Could not start recording." };
+  await chrome.storage.session.set({ [REC_KEY]: { tabId, sessionId: session.sessionId, mic: res.mic, at: Date.now() } });
+  notifyTab(tabId, true, { mic: res.mic });
+  await chrome.action.setBadgeText({ text: "AUD" });
+  await chrome.action.setBadgeBackgroundColor({ color: "#f0734a" });
+  return { ok: true, mic: res.mic };
+}
+
+async function stopRecording(reason) {
+  const rec = await recording();
+  if (!rec) return;
+  const ctx = await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"] });
+  if (ctx.length) await chrome.runtime.sendMessage({ target: "offscreen", type: "stop", payload: { reason } });
+  await chrome.storage.session.remove(REC_KEY);
+  notifyTab(rec.tabId, false);
+  await badge();
+}
+
+// Keyboard shortcut (Alt+Shift+R by default) toggles recording on the active tab.
+chrome.commands.onCommand.addListener(async (command, tab) => {
+  if (command !== "toggle-audio" || !tab?.id) return;
+  const rec = await recording();
+  if (rec?.tabId === tab.id) return stopRecording("stopped");
+  const res = await startRecording(tab.id);
+  if (!res.ok) notifyTab(tab.id, false, { error: res.error });
+});
+
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  const rec = await recording();
+  if (rec?.tabId === tabId) await stopRecording("tab_closed");
 });

@@ -7,20 +7,29 @@
 // Raw fetch rather than googleapis: two endpoints and a token refresh do not
 // justify the dependency.
 import { db } from "./db.js";
+import * as config from "./config.js";
 import { eventConferenceCodes } from "./matching.js";
 
 const AUTH = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN = "https://oauth2.googleapis.com/token";
 const CALENDAR = "https://www.googleapis.com/calendar/v3";
 
-// Read events only. Nothing here ever writes to a calendar.
+// Read events only. Nothing here ever writes to a calendar. drive.file lets
+// ClearNote create and update only the files and folders it made itself (meeting
+// notes and audio); it cannot see anything else in your Drive.
+export const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+// Lets ClearNote list your calendars (names only) so you can choose which to read.
+export const CALENDAR_LIST_SCOPE = "https://www.googleapis.com/auth/calendar.calendarlist.readonly";
 const SCOPE = [
   "https://www.googleapis.com/auth/calendar.events.readonly",
+  CALENDAR_LIST_SCOPE,
   "https://www.googleapis.com/auth/userinfo.email",
+  DRIVE_SCOPE,
 ].join(" ");
 
-const clientId = () => process.env.GOOGLE_CLIENT_ID || "";
-const clientSecret = () => process.env.GOOGLE_CLIENT_SECRET || "";
+// Pasted in the dashboard's Settings, or set in the environment.
+const clientId = () => config.get("googleClientId");
+const clientSecret = () => config.get("googleClientSecret");
 export const redirectUri = () =>
   process.env.GOOGLE_REDIRECT_URI ||
   `http://localhost:${process.env.PORT || 8787}/api/google/callback`;
@@ -40,6 +49,9 @@ export function connectionStatus() {
   return {
     configured: googleConfigured(),
     connected: !!a?.refresh_token,
+    // Connections made before Drive saving existed need to reconnect once.
+    drive: !!a?.refresh_token && String(a?.scope || "").includes(DRIVE_SCOPE),
+    calendarList: !!a?.refresh_token && String(a?.scope || "").includes(CALENDAR_LIST_SCOPE),
     email: a?.email ?? null,
     lastSyncAt: a?.last_sync_at ?? null,
     eventCount: db.prepare(`SELECT COUNT(*) n FROM calendar_events`).get().n,
@@ -131,7 +143,7 @@ export async function exchangeCode(code) {
 }
 
 /** A valid access token, refreshed when it is close to expiring. */
-async function accessToken() {
+export async function accessToken() {
   const a = account();
   if (!a?.refresh_token) throw new Error("Google Calendar is not connected");
   if (a.access_token && a.expires_at > Date.now() + 60000) return a.access_token;
@@ -177,14 +189,14 @@ const insertAttendee = db.prepare(
    VALUES (?, ?, ?, ?, ?)`,
 );
 
-const storeEvents = db.transaction((events) => {
+const storeEvents = db.transaction((events, calendarId) => {
   for (const ev of events) {
     // All-day entries ("out of office", "holiday") are not meetings.
     if (!ev.start?.dateTime || !ev.end?.dateTime) continue;
 
     upsertEvent.run({
       id: ev.id,
-      calendar_id: ev.organizer?.email || "primary",
+      calendar_id: calendarId,
       title: ev.summary || "(no title)",
       description: ev.description || null,
       location: ev.location || null,
@@ -220,25 +232,67 @@ const storeEvents = db.transaction((events) => {
  * week, which is enough to match anything just captured and to show what is
  * coming up.
  */
+/** The calendars chosen in Settings (your main calendar unless you pick others). */
+export function selectedCalendars() {
+  try {
+    const ids = JSON.parse(config.get("calendarIds"));
+    if (Array.isArray(ids) && ids.length) return ids.map(String);
+  } catch {
+    /* fall through */
+  }
+  return ["primary"];
+}
+
+/** Your calendars, for choosing which ClearNote reads. */
+export async function listCalendars() {
+  const out = [];
+  let pageToken;
+  do {
+    const page = await api("/users/me/calendarList", { maxResults: "250", ...(pageToken ? { pageToken } : {}) });
+    for (const c of page.items || []) {
+      out.push({
+        id: c.id,
+        name: c.summaryOverride || c.summary || c.id,
+        primary: !!c.primary,
+        owner: c.accessRole === "owner",
+      });
+    }
+    pageToken = page.nextPageToken;
+  } while (pageToken);
+  // Main calendar first, then your own, then the rest, each alphabetically.
+  return out.sort((a, b) => b.primary - a.primary || b.owner - a.owner || a.name.localeCompare(b.name));
+}
+
 export async function syncEvents({ daysBack = 2, daysForward = 7 } = {}) {
   const timeMin = new Date(Date.now() - daysBack * 864e5).toISOString();
   const timeMax = new Date(Date.now() + daysForward * 864e5).toISOString();
+  const calendars = selectedCalendars();
 
-  let pageToken;
   let fetched = 0;
-  do {
-    const page = await api("/calendars/primary/events", {
-      timeMin,
-      timeMax,
-      singleEvents: "true", // expand recurring series into instances
-      orderBy: "startTime",
-      maxResults: "250",
-      ...(pageToken ? { pageToken } : {}),
-    });
-    storeEvents(page.items || []);
-    fetched += (page.items || []).length;
-    pageToken = page.nextPageToken;
-  } while (pageToken);
+  for (const calendarId of calendars) {
+    let pageToken;
+    do {
+      const page = await api(`/calendars/${encodeURIComponent(calendarId)}/events`, {
+        timeMin,
+        timeMax,
+        singleEvents: "true", // expand recurring series into instances
+        orderBy: "startTime",
+        maxResults: "250",
+        ...(pageToken ? { pageToken } : {}),
+      });
+      storeEvents(page.items || [], calendarId);
+      fetched += (page.items || []).length;
+      pageToken = page.nextPageToken;
+    } while (pageToken);
+  }
+
+  // Events from calendars you have since unticked are dropped.
+  const keep = calendars.map(() => "?").join(",");
+  const stale = db.prepare(`SELECT id FROM calendar_events WHERE calendar_id NOT IN (${keep})`).all(...calendars);
+  for (const { id } of stale) {
+    db.prepare(`DELETE FROM event_attendees WHERE event_id = ?`).run(id);
+    db.prepare(`DELETE FROM calendar_events WHERE id = ?`).run(id);
+  }
 
   db.prepare(`UPDATE google_account SET last_sync_at = ? WHERE id = 1`).run(Date.now());
 

@@ -21,8 +21,12 @@ import {
 import { candidateEvents, getEvent, linkMeetingToEvent, upcomingEvents } from "./db.js";
 import { pickMatch, shouldAdoptTitle, reconcileParticipants } from "./matching.js";
 import * as google from "./google.js";
-import { analyzeMeeting, askMeeting, aiConfigured } from "./ai.js";
+import { analyzeMeeting, askMeeting, aiConfigured, providerOrder, testProvider } from "./ai.js";
+import * as config from "./config.js";
+import { listDirs, makeDir } from "./folders.js";
 import { toText, filenameFor } from "./export.js";
+import { registerAudioRoutes, processAudio, audioFields, resumePending, deleteAudio, onAudioDone } from "./audio.js";
+import { saveMeeting, scheduleSave, exportStatus, fillName, PART_KEYS } from "./save.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -110,7 +114,7 @@ app.post(
   wrap(async (req, res) => {
     const meetingId = resolveMeetingId(req.params.id);
     if (!meetingId) return res.status(404).json({ error: "unknown session" });
-    const { endedAt = Date.now(), speakers = [], title } = req.body || {};
+    const { endedAt = Date.now(), speakers = [], title, myName = "" } = req.body || {};
     if (title) db.prepare(`UPDATE meetings SET title = ? WHERE id = ?`).run(title, meetingId);
     closeMeeting(meetingId, { endedAt: Number(endedAt), speakers });
 
@@ -119,6 +123,120 @@ app.post(
     matchToCalendar(meetingId)
       .catch((err) => console.warn(`[clearnote] calendar match skipped: ${err.message}`))
       .finally(() => summarize(meetingId).catch(() => {}));
+    processAudio(meetingId, { myName }).catch(() => {});
+  }),
+);
+
+registerAudioRoutes(app, { requireToken, wrap });
+onAudioDone((id) => scheduleSave(id, 1000));
+
+// An edit in the dashboard (a transcript line, a title, an action item) updates
+// the saved notes a few seconds later.
+app.use((req, res, next) => {
+  if (!["PATCH", "POST", "DELETE"].includes(req.method)) return next();
+  const m = req.path.match(/^\/api\/(meetings|segments|action-items)\/([^/]+)/);
+  if (!m || req.path.endsWith("/save") || req.path.endsWith("/retranscribe")) return next();
+  res.on("finish", () => {
+    if (res.statusCode >= 400) return;
+    let meetingId = m[2];
+    if (m[1] === "segments") meetingId = db.prepare(`SELECT meeting_id FROM segments WHERE id = ?`).get(m[2])?.meeting_id;
+    if (m[1] === "action-items") meetingId = db.prepare(`SELECT meeting_id FROM action_items WHERE id = ?`).get(m[2])?.meeting_id;
+    if (meetingId && db.prepare(`SELECT 1 FROM meetings WHERE id = ?`).get(meetingId)) scheduleSave(meetingId);
+  });
+  next();
+});
+
+app.post(
+  "/api/meetings/:id/save",
+  wrap(async (req, res) => {
+    await saveMeeting(req.params.id);
+    res.json(exportStatus(req.params.id));
+  }),
+);
+
+// ------------------------------------------------------------------ settings
+
+// Settings change keys and where data goes, so only the dashboard itself and
+// the extension may call these. Any other website gets a 403, even though the
+// rest of the API allows cross-origin calls from the meeting pages.
+function ownOrigin(req, res, next) {
+  const origin = req.get("origin");
+  const host = req.get("host");
+  if (!origin || origin === `http://${host}` || origin.startsWith("chrome-extension://")) return next();
+  res.status(403).json({ error: "settings can only be changed from the ClearNote dashboard or extension" });
+}
+
+app.get("/api/settings", ownOrigin, (_req, res) =>
+  res.json({ ...config.publicView(), ai: { configured: aiConfigured(), order: providerOrder() } }),
+);
+
+app.patch(
+  "/api/settings",
+  ownOrigin,
+  wrap((req, res) => {
+    const before = config.get("calendarIds");
+    config.update(req.body || {});
+    if (config.get("calendarIds") !== before && google.connectionStatus().connected) {
+      google.syncEvents().catch((err) => console.warn(`[clearnote] calendar sync failed: ${err.message}`));
+    }
+    res.json({ ...config.publicView(), ai: { configured: aiConfigured(), order: providerOrder() } });
+  }),
+);
+
+// What the extension needs: your name and the capture options.
+// Folder browser for the "save audio to this computer" setting.
+app.get(
+  "/api/folders",
+  ownOrigin,
+  wrap((req, res) => {
+    try {
+      res.json(listDirs(req.query.path));
+    } catch (err) {
+      res.status(err.status || 500).json({ error: err.message });
+    }
+  }),
+);
+app.post(
+  "/api/folders",
+  ownOrigin,
+  wrap((req, res) => {
+    try {
+      res.json(makeDir(req.body?.parent, req.body?.name));
+    } catch (err) {
+      res.status(err.status || 500).json({ error: err.message });
+    }
+  }),
+);
+
+// Live examples for the name templates on the Settings page, using your most
+// recent meeting (or a sample when there is none).
+app.post(
+  "/api/names/preview",
+  ownOrigin,
+  wrap((req, res) => {
+    const latest = db.prepare(`SELECT id FROM meetings ORDER BY started_at DESC LIMIT 1`).get();
+    const m = latest
+      ? getMeeting(latest.id)
+      : { title: "Pricing sync", started_at: Date.now(), platform_label: "Google Meet", spoke: [{ name: "Ana Silva" }, { name: "Ben Ito" }] };
+    const b = req.body || {};
+    const parts = Object.fromEntries(
+      Object.keys(PART_KEYS).map((k) => [k, `${fillName(b.audioFileName ?? config.get("audioFileName"), m, { part: b[PART_KEYS[k]] ?? config.get(PART_KEYS[k]) })}.mp3`]),
+    );
+    res.json({ notes: fillName(b.notesDocName ?? config.get("notesDocName"), m), audio: parts, from: latest ? m.title : "a sample meeting" });
+  }),
+);
+
+app.get("/api/extension-settings", ownOrigin, (_req, res) => res.json(config.extensionView()));
+
+app.post(
+  "/api/ai/test",
+  ownOrigin,
+  wrap(async (req, res) => {
+    try {
+      res.json(await testProvider(req.body?.provider === "openrouter" ? "openrouter" : "anthropic"));
+    } catch (err) {
+      res.json({ ok: false, error: err.message });
+    }
   }),
 );
 
@@ -168,6 +286,16 @@ async function matchToCalendar(meetingId) {
 
 app.get("/api/google/status", wrap((_req, res) => res.json(google.connectionStatus())));
 
+app.get(
+  "/api/google/calendars",
+  ownOrigin,
+  wrap(async (_req, res) => {
+    const selected = google.selectedCalendars();
+    if (!google.connectionStatus().calendarList) return res.json({ needsReconnect: true, selected, calendars: [] });
+    res.json({ needsReconnect: false, selected, calendars: await google.listCalendars() });
+  }),
+);
+
 // Short-lived OAuth state values, so the callback cannot be driven by another site.
 const oauthStates = new Set();
 
@@ -177,7 +305,7 @@ app.get(
     if (!google.googleConfigured()) {
       return res
         .status(400)
-        .send("Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, then restart the server.");
+        .send("Add your Google client ID and secret in Settings first.");
     }
     // Guards the callback against being driven by another site.
     const state = randomUUID();
@@ -264,7 +392,17 @@ app.post(
 
 // ------------------------------------------------------------------ AI
 
+// Every path through a summary ends with the meeting saved wherever Settings
+// says (Drive notes, audio files), so the saved copy always matches.
 async function summarize(meetingId, template) {
+  try {
+    await summarizeOnly(meetingId, template);
+  } finally {
+    scheduleSave(meetingId, 1000);
+  }
+}
+
+async function summarizeOnly(meetingId, template) {
   const meeting = db.prepare(`SELECT * FROM meetings WHERE id = ?`).get(meetingId);
   const segments = getSegments(meetingId);
   if (!meeting) return;
@@ -276,7 +414,7 @@ async function summarize(meetingId, template) {
   if (!aiConfigured()) {
     markUnsummarized(
       meetingId,
-      "No summary: set ANTHROPIC_API_KEY and use Generate summary. The transcript is saved in full.",
+      "No summary: add an AI key in Settings and use Generate summary. The transcript is saved in full.",
     );
     return;
   }
@@ -314,7 +452,7 @@ app.post(
   wrap(async (req, res) => {
     const id = resolveMeetingId(req.params.id);
     if (!id) return res.status(404).json({ error: "unknown meeting" });
-    if (!aiConfigured()) return res.status(400).json({ error: "no ANTHROPIC_API_KEY set" });
+    if (!aiConfigured()) return res.status(400).json({ error: "no AI provider set: add a key in Settings" });
     const question = String(req.body?.question || "").trim();
     if (!question) return res.status(400).json({ error: "question is required" });
     const meeting = db.prepare(`SELECT * FROM meetings WHERE id = ?`).get(id);
@@ -331,9 +469,23 @@ app.post(
 
 app.get(
   "/api/meetings",
-  wrap((req, res) =>
-    res.json(listMeetings({ q: req.query.q, tag: req.query.tag, limit: Number(req.query.limit) || 60 })),
-  ),
+  wrap((req, res) => {
+    const rows = listMeetings({ q: req.query.q, tag: req.query.tag, limit: Number(req.query.limit) || 60 });
+    // Per-row status for the list: transcript kind, audio, summary, saved copy.
+    res.json(
+      rows.map((m) => {
+        const a = audioFields(m.id);
+        const s = exportStatus(m.id);
+        return {
+          ...m,
+          recordType: a.recordType,
+          audioStatus: a.audioStatus,
+          hasAudio: a.audioTracks.some((t) => t.bytes > 0),
+          saved: { savedAt: s.savedAt, error: s.error, notesUrl: s.notesUrl },
+        };
+      }),
+    );
+  }),
 );
 
 app.get(
@@ -341,7 +493,7 @@ app.get(
   wrap((req, res) => {
     const m = getMeeting(req.params.id);
     if (!m) return res.status(404).json({ error: "unknown meeting" });
-    res.json(m);
+    res.json({ ...m, ...audioFields(m.id), saved: exportStatus(m.id) });
   }),
 );
 
@@ -361,6 +513,7 @@ app.delete(
   "/api/meetings/:id",
   wrap((req, res) => {
     const info = db.prepare(`DELETE FROM meetings WHERE id = ?`).run(req.params.id);
+    if (info.changes) deleteAudio(req.params.id);
     res.json({ deleted: info.changes });
   }),
 );
@@ -463,17 +616,18 @@ app.get(
 
 // ------------------------------------------------------------------ dashboard
 
+app.use("/vendor/shoelace", express.static(path.join(here, "node_modules", "@shoelace-style", "shoelace", "cdn")));
 app.use(express.static(path.join(here, "public")));
 app.get("*", (_req, res) => res.sendFile(path.join(here, "public", "index.html")));
 
 const server = app.listen(PORT, () => {
   console.log(`\n  ClearNote server  http://localhost:${PORT}`);
-  console.log(`  summaries         ${aiConfigured() ? "on" : "off (set ANTHROPIC_API_KEY)"}`);
+  console.log(`  summaries         ${aiConfigured() ? `on (${providerOrder().join(", then ")})` : "off (add a key in Settings)"}`);
   console.log(`  sync token        ${TOKEN ? "required" : "not set (local use only)"}`);
   const cal = google.connectionStatus();
   console.log(
     `  calendar          ${
-      cal.connected ? `connected as ${cal.email}` : cal.configured ? "ready to connect" : "off (no GOOGLE_CLIENT_ID)"
+      cal.connected ? `connected as ${cal.email}` : cal.configured ? "ready to connect" : "off (add Google client details in Settings)"
     }\n`,
   );
 });
@@ -498,3 +652,4 @@ const stale = db
   .prepare(`SELECT id FROM meetings WHERE status = 'processing' AND ended_at IS NOT NULL`)
   .all();
 for (const row of stale) summarize(row.id).catch(() => {});
+resumePending();

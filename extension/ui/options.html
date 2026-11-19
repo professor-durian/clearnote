@@ -5,69 +5,42 @@
     <title>ClearNote settings</title>
     <style>
       :root { color-scheme: dark; }
-      body {
-        max-width: 560px; margin: 40px auto; padding: 0 20px;
-        font: 14px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-        background: #0e131a; color: #e6edf3;
-      }
-      h1 { display: flex; align-items: center; gap: 10px; font-size: 19px; }
-      .mark { width: 22px; height: 22px;
-        background: url("../icons/mark.svg") center/contain no-repeat; }
-      label { display: block; margin: 20px 0 6px; font-weight: 600; font-size: 13px; }
-      .hint { color: #7a8492; font-size: 12px; font-weight: 400; margin-top: 3px; }
-      input[type="text"], input[type="password"] {
-        width: 100%; padding: 9px 11px; border-radius: 9px; border: 1px solid #2a3340;
-        background: #151c25; color: #e6edf3; font: inherit;
-      }
-      .check { display: flex; align-items: center; gap: 9px; margin: 16px 0; }
-      .check input { width: 16px; height: 16px; }
-      .check span { font-weight: 600; font-size: 13px; }
-      button {
-        margin-top: 24px; padding: 9px 18px; border-radius: 9px; border: 0;
-        background: #2f7cf6; color: #fff; font: inherit; font-weight: 650; cursor: pointer;
-      }
-      button:hover { background: #3f88fb; }
-      #saved { margin-left: 12px; color: #3ddc84; font-size: 13px; opacity: 0; transition: opacity .2s; }
-      #saved.show { opacity: 1; }
+      body { max-width: 520px; margin: 32px auto; padding: 0 16px;
+        font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        background: #11161d; color: #e6edf3; }
+      h1 { font-size: 18px; }
+      h2 { font-size: 14px; margin: 24px 0 6px; }
+      label { display: block; margin: 14px 0 4px; font-weight: 600; font-size: 13px; }
+      .hint { color: #8b97a6; font-size: 12px; font-weight: 400; }
+      input[type="text"], input[type="password"] { width: 100%; box-sizing: border-box; font: inherit;
+        padding: 8px 10px; border-radius: 8px; border: 1px solid #2a3340; background: #0e131a; color: #e6edf3; }
+      button, a.btn { font: inherit; font-weight: 600; padding: 8px 14px; border-radius: 8px; border: 1px solid #2f7cf6;
+        background: #2f7cf6; color: #fff; cursor: pointer; text-decoration: none; display: inline-block; }
+      button.ghost { background: #1a222c; border-color: #2a3340; color: #d7e0ea; }
+      #saved, #micState { margin-left: 10px; color: #3ddc84; font-size: 12.5px; }
+      .card { border: 1px solid #2a3340; border-radius: 12px; padding: 14px 16px; margin: 16px 0; background: #161c25; }
     </style>
   </head>
   <body>
-    <h1><span class="mark"></span> ClearNote settings</h1>
+    <h1>ClearNote</h1>
 
-    <label for="serverUrl">Server URL
-      <span class="hint">Where the ClearNote server is running. Captions are posted here.</span>
-    </label>
+    <div class="card">
+      <b>Your name, capture options, AI keys and calendar</b>
+      <p class="hint">All of these are in the dashboard's Settings, so there is one place to change them.</p>
+      <a class="btn" id="openDashboard" href="#" target="_blank" rel="noreferrer">Open Settings</a>
+    </div>
+
+    <h2>Microphone</h2>
+    <p class="hint">Needed only to record your own voice alongside the call. Chrome asks once.</p>
+    <button type="button" class="ghost" id="allowMic">Allow microphone</button><span id="micState"></span>
+
+    <h2>Connection</h2>
+    <label for="serverUrl">Server address</label>
     <input id="serverUrl" type="text" placeholder="http://localhost:8787" />
+    <label for="token">Sync token <span class="hint">Only if you set CLEARNOTE_TOKEN on the server.</span></label>
+    <input id="token" type="password" />
+    <p><button id="save">Save</button><span id="saved"></span></p>
 
-    <label for="displayName">Your name
-      <span class="hint">Meeting platforms label you "You". This replaces that in transcripts, so
-        your own lines are attributed to you and can be matched to calendar invitees. Use the
-        spelling your calendar uses.</span>
-    </label>
-    <input id="displayName" type="text" placeholder="e.g. Ada Lovelace" />
-
-    <label for="token">Sync token
-      <span class="hint">Must match CLEARNOTE_TOKEN on the server. Leave blank if the server has none.</span>
-    </label>
-    <input id="token" type="password" placeholder="" />
-
-    <div class="check">
-      <input id="autoCapture" type="checkbox" />
-      <span>Capture every meeting automatically</span>
-    </div>
-    <div class="check">
-      <input id="hideCaptions" type="checkbox" />
-      <span>Hide the platform's caption overlay<span class="hint" style="display:block;font-weight:400">
-        Captions must be on for there to be anything to transcribe, but they need not be on screen —
-        ClearNote shows the same text in its own panel. Leave this off if you or anyone screen-sharing
-        with you reads the captions.</span></span>
-    </div>
-    <div class="check">
-      <input id="debug" type="checkbox" />
-      <span>Log capture details to the page console</span>
-    </div>
-
-    <button id="save">Save</button><span id="saved">Saved</span>
     <script src="options.js"></script>
   </body>
 </html>

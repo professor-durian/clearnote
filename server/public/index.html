@@ -1,9 +1,12 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="sl-theme-dark">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ClearNote</title>
+    <!-- Shoelace (shoelace.style): standard components, served locally from node_modules. -->
+    <link rel="stylesheet" href="/vendor/shoelace/themes/dark.css" />
+    <script type="module" src="/vendor/shoelace/shoelace-autoloader.js"></script>
     <link rel="stylesheet" href="styles.css" />
     <link rel="icon" href="mark.svg" type="image/svg+xml" />
   </head>
@@ -13,23 +16,18 @@
         <span class="mark"></span>
         <span>ClearNote</span>
       </a>
-      <nav>
+      <nav aria-label="Main">
         <a href="#/" data-nav="meetings">Meetings</a>
         <a href="#/actions" data-nav="actions">Action items</a>
         <a href="#/settings" data-nav="settings">Settings</a>
       </nav>
-      <div class="search">
-        <input id="q" type="search" placeholder="Search every transcript…" autocomplete="off" />
-      </div>
-      <span class="pill" id="ai-state"></span>
+      <sl-input id="q" type="search" size="small" placeholder="Search every transcript…" clearable autocomplete="off">
+        <sl-icon name="search" slot="prefix"></sl-icon>
+      </sl-input>
+      <sl-tag id="ai-state" size="small" variant="neutral" pill></sl-tag>
     </header>
 
     <main id="view" aria-live="polite"></main>
-
-    <footer class="foot">
-      No bot joined any of these calls — ClearNote reads the captions the meeting platform
-      already produces.
-    </footer>
 
     <script src="app.js"></script>
   </body>
