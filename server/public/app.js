@@ -199,7 +199,7 @@ async function renderList({ q, tag: tagName, person } = {}) {
     <div class="tablebox">
       <table class="meetings">
         <thead><tr>
-          <th>Meeting</th><th>When</th><th>People</th><th>Transcript</th><th>Summary</th><th>Drive</th><th><span class="sr">Actions</span></th>
+          <th>Meeting</th><th>When</th><th>People</th><th>Transcript</th><th>Audio</th><th>Summary</th><th>Drive</th><th><span class="sr">Actions</span></th>
         </tr></thead>
         <tbody>
           ${
@@ -222,13 +222,14 @@ async function renderList({ q, tag: tagName, person } = {}) {
                             : `<span class="muted">—</span>`
                       }</td>
                       <td>${tag(...st.transcript)}</td>
+                      <td>${m.hasAudio ? tag("Recorded", "neutral") : `<span class="muted">—</span>`}</td>
                       <td>${tag(...st.summary)}</td>
                       <td>${m.saved?.error ? `<sl-tooltip content="${esc(m.saved.error)}">${tag(...st.drive)}</sl-tooltip>` : tag(...st.drive)}</td>
                       <td style="text-align:right">${actionMenu(m)}</td>
                     </tr>`;
                   })
                   .join("")
-              : `<tr><td colspan="7" class="muted" style="padding:24px 16px">Nothing in this view.</td></tr>`
+              : `<tr><td colspan="8" class="muted" style="padding:24px 16px">Nothing in this view.</td></tr>`
           }
         </tbody>
       </table>
