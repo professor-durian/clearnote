@@ -76,7 +76,8 @@ async function start({ streamId, sessionId, startedAt, serverUrl, token, myName,
   return { ok: true, mic: state.mic };
 }
 
-async function stop(reason = "stopped") {
+async function stop(arg = "stopped") {
+  const reason = typeof arg === "string" ? arg : arg?.reason || "stopped";
   const state = rec;
   if (!state) return { ok: true };
   rec = null;

@@ -163,7 +163,8 @@ const handlers = {
   async startSession(payload, sender) {
     // Created synchronously so the content script gets a real id to stream to.
     try {
-      const { id } = await api("/api/sessions", payload);
+      const { id, existing } = await api("/api/sessions", payload);
+      if (existing) return { sessionId: id, existing: true };
       await rememberTabSession(sender.tab?.id, { sessionId: id, startedAt: payload.startedAt });
       await badge();
       return { sessionId: id };

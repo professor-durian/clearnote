@@ -104,7 +104,7 @@
   }
   window.addEventListener("yt-navigate-start", () => stopLive("navigated"));
 
-  async function capture() {
+  async function capture({ again = false } = {}) {
     if (!videoId()) return { ok: false, error: "Open a video first." };
     if (live) return { ok: true, mode: "live", note: "Already reading this video's captions." };
     const startedAt = Date.now();
@@ -116,10 +116,22 @@
       url: `https://www.youtube.com/watch?v=${videoId()}`,
       startedAt,
     };
-    const lines = await readTranscriptPanel();
+    if (!again) {
+      const prior = await send("startSession", { ...base, reuse: true });
+      if (prior.existing) return { ok: true, mode: "exists", id: prior.sessionId };
+      if (prior.sessionId) {
+        // No earlier capture: this new session is the one to fill.
+        return fill(prior.sessionId, startedAt);
+      }
+      return { ok: false, error: "ClearNote's server isn't reachable." };
+    }
     const created = await send("startSession", base);
-    const sessionId = created.sessionId;
-    if (!sessionId) return { ok: false, error: "ClearNote's server isn't reachable." };
+    if (!created.sessionId) return { ok: false, error: "ClearNote's server isn't reachable." };
+    return fill(created.sessionId, startedAt);
+  }
+
+  async function fill(sessionId, startedAt) {
+    const lines = await readTranscriptPanel();
 
     if (lines) {
       const who = channel();
@@ -141,7 +153,7 @@
 
   chrome.runtime.onMessage.addListener((msg, _sender, respond) => {
     if (msg?.type === "ytCapture") {
-      capture().then(respond).catch((err) => respond({ ok: false, error: err.message }));
+      capture({ again: !!msg.again }).then(respond).catch((err) => respond({ ok: false, error: err.message }));
       return true;
     }
     if (msg?.type === "ytStop") {

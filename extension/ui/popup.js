@@ -147,9 +147,14 @@ async function paintAudio() {
   }
 
   if (info.kind === "youtube") {
-    const yt = await chrome.tabs.sendMessage(tab.id, { type: "ytState" }).catch(() => null);
+    let yt = await chrome.tabs.sendMessage(tab.id, { type: "ytState" }).catch(() => null);
     if (!yt) {
-      hint.textContent = "Reload this YouTube page once so ClearNote can read it.";
+      // A tab opened before ClearNote was (re)loaded has no reader yet: add it.
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["platforms/youtube.js"] }).catch(() => null);
+      yt = await chrome.tabs.sendMessage(tab.id, { type: "ytState" }).catch(() => null);
+    }
+    if (!yt) {
+      hint.textContent = "ClearNote couldn't read this page. Reload it and try again.";
       show(alt, "Record audio instead", recordAudio, "");
       return;
     }
@@ -162,10 +167,23 @@ async function paintAudio() {
       hint.textContent = "Reading the captions as the video plays.";
       return;
     }
-    const grab = async () => {
+    const grab = async (again = false) => {
       btn.textContent = "Reading…";
-      const r = await chrome.tabs.sendMessage(tab.id, { type: "ytCapture" }).catch((e) => ({ ok: false, error: e.message }));
+      const r = await chrome.tabs.sendMessage(tab.id, { type: "ytCapture", again }).catch((e) => ({ ok: false, error: e.message }));
       if (!r.ok) return fail(r.error || "Couldn't read this video.");
+      if (r.mode === "exists") {
+        hint.innerHTML = "";
+        hint.append("Already captured. ");
+        const a = Object.assign(document.createElement("a"), {
+          href: `${(s.dashboardUrl || "http://localhost:8787").replace(/\/$/, "")}/#/m/${r.id}`,
+          target: "_blank",
+          textContent: "Open it in the dashboard",
+        });
+        hint.append(a);
+        show(btn, "Capture again", () => grab(true), "");
+        alt.hidden = true;
+        return;
+      }
       hint.textContent =
         r.mode === "transcript"
           ? `Took the full transcript (${r.lines} lines). The summary and notes follow in the dashboard.`
@@ -173,12 +191,12 @@ async function paintAudio() {
       if (r.mode === "live") paintAudio();
       else btn.hidden = true;
     };
-    show(btn, "Get transcript", grab);
+    show(btn, "Get transcript", () => grab(false));
     show(alt, "Record audio instead", recordAudio, "");
     hint.textContent = "Takes the video's transcript, or reads its captions as it plays.";
     if (oneClick && actions.captions !== "off") {
       autoDone = true;
-      grab();
+      grab(false);
     }
     return;
   }

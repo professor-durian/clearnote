@@ -82,9 +82,20 @@ app.post(
   "/api/sessions",
   requireToken,
   wrap((req, res) => {
-    const { meetingKey, platform, platformLabel, title, url, startedAt } = req.body || {};
+    const { meetingKey, platform, platformLabel, title, url, startedAt, reuse } = req.body || {};
     if (!meetingKey || !platform || !startedAt) {
       return res.status(400).json({ error: "meetingKey, platform and startedAt are required" });
+    }
+    // A video captured before is not captured again unless asked (reuse: false).
+    if (reuse) {
+      const prior = db
+        .prepare(
+          `SELECT m.id FROM meetings m WHERE m.meeting_key = ? AND m.ended_at IS NOT NULL
+             AND EXISTS (SELECT 1 FROM segments s WHERE s.meeting_id = m.id)
+           ORDER BY m.started_at DESC LIMIT 1`,
+        )
+        .get(meetingKey);
+      if (prior) return res.json({ id: prior.id, existing: true });
     }
     const id = openMeeting({
       meetingKey,
