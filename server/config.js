@@ -24,12 +24,15 @@ export const FIELDS = {
   hideCaptions: { default: true },
   recordMic: { default: true },
   panelMode: { default: "compact" },
-  // Send finished meetings to another app (a web address that accepts JSON)
+  // Send finished captures to another app (a web address that accepts JSON)
   webhookUrl: { default: "" },
   webhookSecret: { secret: true, default: "" },
-  webhookSince: { default: 0 },
-  webhookKinds: { default: "call" },
-  webhookSendOthers: { default: false }, // also send captures made on your other computers (arrived through sync) // which captures go: any of call, youtube, web // meetings finished before this aren't sent unless asked
+  webhookSince: { default: 0 }, // captures finished before this aren't sent unless asked
+  webhookKinds: { default: "call" }, // which captures go: any of call, youtube, web
+  // Also send captures recorded on your other computers (they arrive through
+  // sync). Only matters once an address is set; a computer with this off sends
+  // only its own recordings, so two connected computers never both send one.
+  webhookSendOthers: { default: true },
   syncDrive: { default: true }, // share finished meetings with your other computers through Google Drive
   deviceName: { default: "" }, // shown on meetings recorded here, on your other computers
   deviceId: { default: "" },

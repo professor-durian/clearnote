@@ -1078,7 +1078,7 @@ async function renderSettings(tabName = "general") {
                 const [k, label] = x.split(":");
                 return `<sl-checkbox data-kind="${k}" ${String(v.webhookKinds || "call").split(",").includes(k) ? "checked" : ""}>${label}</sl-checkbox>`;
               }).join("")}</div>
-            ${sw("webhookSendOthers", "Also send captures from my other computers", "They arrive here through sync. Turn this on for one computer only, and leave the address empty on the others, so each capture is sent once.")}
+            ${sw("webhookSendOthers", "Also send captures recorded on my other computers", "They arrive here through sync, and go out from this computer once their transcript and summary are in. Use one computer as the sender: leave the address empty on the others, or turn this off there, so each capture is sent once.")}
             <div class="row"><sl-button id="hooktest">Send a test</sl-button><sl-button id="hookpast">Also send past captures</sl-button><span id="hookresult" class="small"></span></div>
           </div>
           <div class="panel stack">

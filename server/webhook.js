@@ -13,8 +13,10 @@
 // gaps; a 410 reply means "stop sending this one". The receiver may answer
 // { recordId, url, appName } and ClearNote links to that record.
 //
-// Only the computer that recorded a capture sends it (and its deletion), so
-// two synced computers never deliver the same capture twice.
+// The computer that recorded a capture sends it; one computer can also send
+// the captures recorded on the others (they arrive through sync), so only that
+// one needs the connection. A deletion goes out from whichever computer sent
+// the capture, wherever it was deleted.
 
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import { db, getMeeting, CALL_PLATFORMS } from "./db.js";
@@ -266,7 +268,11 @@ export async function sendTest() {
   return { ok: r.ok, status: r.status, error: r.error };
 }
 
-/** Finished captures: ended, summarised (or failed), audio settled, recorded here. */
+/**
+ * Finished captures: ended, summarised (or failed), audio settled. Recorded
+ * here, or (with "Also send captures recorded on my other computers") arrived
+ * through sync, which brings the transcript, summary and Drive ids together.
+ */
 function finishedSince(since) {
   return db
     .prepare(
