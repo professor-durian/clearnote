@@ -21,7 +21,7 @@ import {
 import { candidateEvents, getEvent, linkMeetingToEvent, upcomingEvents } from "./db.js";
 import { pickMatch, shouldAdoptTitle, reconcileParticipants } from "./matching.js";
 import * as google from "./google.js";
-import { analyzeMeeting, askMeeting, aiConfigured, providerOrder, testProvider } from "./ai.js";
+import { analyzeMeeting, askMeeting, aiConfigured, providerOrder, testProvider, listModels } from "./ai.js";
 import * as config from "./config.js";
 import { listDirs, makeDir } from "./folders.js";
 import { usageReport, meetingUsage } from "./usage.js";
@@ -311,6 +311,17 @@ app.get("/api/rules", ownOrigin, (_req, res) =>
 );
 
 // Spending log for the Settings › Usage tab.
+app.get(
+  "/api/ai/models",
+  ownOrigin,
+  wrap(async (req, res) => {
+    try {
+      res.json(await listModels(req.query.provider === "openrouter" ? "openrouter" : "anthropic"));
+    } catch (err) {
+      res.json({ error: err.message, models: [] });
+    }
+  }),
+);
 app.get("/api/usage", ownOrigin, (_req, res) => res.json(usageReport()));
 
 app.get("/api/extension-settings", ownOrigin, (_req, res) => res.json(config.extensionView()));

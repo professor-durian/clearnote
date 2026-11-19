@@ -6,7 +6,7 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 
 import * as config from "./config.js";
-import { recordUsage } from "./usage.js";
+import { PRICES, recordUsage } from "./usage.js";
 
 // Two providers: Anthropic directly, or OpenRouter. Keys are pasted in the
 // dashboard's Settings (or set in the environment). One is primary; if it
@@ -89,6 +89,61 @@ async function openRouter(body) {
   const choice = json.choices?.[0];
   if (!choice) throw new Error("OpenRouter returned no answer");
   return { text: String(choice.message?.content || "").trim(), usage: json.usage, model: json.model };
+}
+
+// ------------------------------------------------------------------ model lists
+// The Settings page offers a list rather than a typed name, so a retired or
+// mistyped model is visible before it fails a summary. Cached for an hour.
+
+const modelCache = {};
+
+async function anthropicModels() {
+  const out = [];
+  for await (const m of client().models.list()) {
+    const p = PRICES[m.id];
+    out.push({
+      id: m.id,
+      name: m.display_name || m.id,
+      inPerM: p ? p[0] : null,
+      outPerM: p ? p[1] : null,
+      structured: m.capabilities?.structured_outputs?.supported !== false,
+    });
+  }
+  return out;
+}
+
+async function openRouterModels() {
+  const res = await fetch("https://openrouter.ai/api/v1/models", {
+    headers: config.get("openrouterKey") ? { authorization: `Bearer ${config.get("openrouterKey")}` } : {},
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`OpenRouter ${res.status}: ${json?.error?.message || res.statusText}`);
+  return (json.data || [])
+    .filter((m) => (m.supported_parameters || []).includes("structured_outputs"))
+    .map((m) => ({
+      id: m.id,
+      name: m.name || m.id,
+      // OpenRouter prices are dollars per token, as strings.
+      inPerM: m.pricing?.prompt != null ? Number(m.pricing.prompt) * 1e6 : null,
+      outPerM: m.pricing?.completion != null ? Number(m.pricing.completion) * 1e6 : null,
+      structured: true,
+    }))
+    // Router placeholders are priced -1; ":batch" variants answer hours later.
+    .filter((m) => !(m.inPerM < 0) && !m.id.endsWith(":batch"));
+}
+
+/** Models the provider offers now, plus whether the saved choice is among them. */
+export async function listModels(provider) {
+  const key = provider === "openrouter" ? config.get("openrouterKey") : config.get("anthropicKey");
+  const cached = modelCache[provider];
+  if (!cached || cached.key !== key || Date.now() - cached.at > 60 * 60 * 1000) {
+    if (provider === "anthropic" && !hasAnthropic()) throw new Error("Add an Anthropic key first.");
+    const models = provider === "openrouter" ? await openRouterModels() : await anthropicModels();
+    modelCache[provider] = { at: Date.now(), key, models };
+  }
+  const models = modelCache[provider].models;
+  const current = modelFor(provider);
+  return { models, current, available: models.some((m) => m.id === current) };
 }
 
 /** Send a one-line test request to a provider; used by the Settings page. */

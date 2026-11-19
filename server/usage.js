@@ -30,8 +30,9 @@ CREATE INDEX IF NOT EXISTS ai_usage_meeting ON ai_usage(meeting_id);
 
 // US$ per million tokens: input, output, cache read, cache write (5-minute).
 // Anthropic list prices; extend when models change.
-const PRICES = {
+export const PRICES = {
   "claude-fable-5-2": [8, 40, 0.2, 10],
+  "claude-fable-5-1": [10, 50, 0.25, 12.5],
   "claude-opus-5-5": [4, 20, 0.2, 5],
   "claude-opus-5": [5, 25, 0.5, 6.25],
   "claude-opus-4-8": [5, 25, 0.5, 6.25],

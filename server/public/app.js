@@ -710,6 +710,62 @@ async function checkUpdates() {
   };
 }
 
+// ------------------------------------------------------------------ model picker
+// A list from the provider, with prices, instead of a typed model name, so a
+// retired or mistyped model shows up here before it fails a summary.
+
+const price = (m) =>
+  m.inPerM == null ? "price not listed" : `$${+m.inPerM.toFixed(2)} in / $${+m.outPerM.toFixed(2)} out per million tokens`;
+
+function modelPicker(key, provider, value, help) {
+  return `<div class="stack" style="gap:6px" data-models="${provider}" data-help="${esc(help)}" data-value="${esc(value)}">
+    ${provider === "openrouter" ? `<sl-input class="mfilter" size="small" placeholder="Filter the list: claude, gpt, gemini…" clearable></sl-input>` : ""}
+    <sl-select data-key="${key}" label="Model" value="${esc(value)}">
+      <sl-option value="${esc(value)}">${esc(value)}</sl-option>
+    </sl-select>
+    <div class="field-hint mhint">${esc(help)} Loading the models on offer…</div>
+  </div>`;
+}
+
+async function loadModelPickers() {
+  for (const box of view.querySelectorAll("[data-models]")) {
+    const provider = box.dataset.models;
+    const label = provider === "openrouter" ? "OpenRouter" : "Anthropic";
+    const select = box.querySelector("sl-select");
+    const hint = box.querySelector(".mhint");
+    const help = box.dataset.help;
+    const r = await api(`/ai/models?provider=${provider}`).catch((err) => ({ error: err.message, models: [] }));
+    if (r.error) {
+      hint.innerHTML = `${esc(help)} <span style="color:var(--sl-color-warning-600)">Couldn't load ${label}'s list: ${esc(r.error)}</span>`;
+      continue;
+    }
+    // The saved choice, from the page as rendered: the select's own value may
+    // not be settled yet while its options are still being upgraded.
+    const current = box.dataset.value;
+    let picked = current;
+    select.addEventListener("sl-change", () => (picked = select.value));
+    const fill = (filter = "") => {
+      const f = filter.toLowerCase();
+      const keep = r.models.filter((m) => !f || m.id.toLowerCase().includes(f) || m.name.toLowerCase().includes(f) || m.id === picked);
+      const retired = r.models.some((m) => m.id === current) ? "" : `<sl-option value="${esc(current)}">${esc(current)} (no longer offered)</sl-option>`;
+      select.innerHTML =
+        retired + keep.map((m) => `<sl-option value="${esc(m.id)}">${esc(m.name)}<small slot="suffix" class="muted">${price(m)}</small></sl-option>`).join("");
+      setTimeout(() => (select.value = picked));
+    };
+    fill();
+    const showHint = () => {
+      const m = r.models.find((x) => x.id === picked);
+      hint.innerHTML = m
+        ? `${esc(help)} <code>${esc(m.id)}</code>: ${price(m)}.`
+        : `<span style="color:var(--sl-color-danger-600)">${esc(picked)} isn't offered by ${label} any more. Pick another model, or summaries will fail.</span>`;
+    };
+    setTimeout(showHint);
+    select.addEventListener("sl-change", () => setTimeout(showHint));
+    const filter = box.querySelector(".mfilter");
+    if (filter) filter.addEventListener("sl-input", () => fill(filter.value));
+  }
+}
+
 function txSetupRow(audio) {
   if (!audio) return `<span class="muted">Couldn't check this Mac's transcription setup.</span>`;
   const st = audio.setup || {};
@@ -832,11 +888,11 @@ async function renderSettings(tabName = "general") {
           ${sw("aiBackup", "If it fails, try the other provider")}
           <h3>Anthropic</h3>
           ${secret("anthropicKey", "API key", "sk-ant-…")}
-          ${input("anthropicModel", "Model", "claude-opus-5-5", "Create a key at console.anthropic.com.")}
+          ${modelPicker("anthropicModel", "anthropic", v.anthropicModel, "Create a key at console.anthropic.com.")}
           <div class="row"><sl-button data-test="anthropic">Test Anthropic</sl-button><span id="test-anthropic" class="small"></span></div>
           <h3>OpenRouter</h3>
           ${secret("openrouterKey", "API key", "sk-or-…")}
-          ${input("openrouterModel", "Model", "anthropic/claude-opus-5.5", "Create a key at openrouter.ai. Any model ID from openrouter.ai/models works.")}
+          ${modelPicker("openrouterModel", "openrouter", v.openrouterModel, "Create a key at openrouter.ai.")}
           <div class="row"><sl-button data-test="openrouter">Test OpenRouter</sl-button><span id="test-openrouter" class="small"></span></div>
         </div></sl-tab-panel>
 
@@ -1013,6 +1069,7 @@ async function renderSettings(tabName = "general") {
     };
   }
   wireTxSetup();
+  loadModelPickers();
   showSync(sync);
   document.getElementById("syncnow").onclick = async (e) => {
     e.target.loading = true;
