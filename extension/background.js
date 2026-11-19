@@ -23,7 +23,7 @@ const CLAIMS_KEY = "cn_claims";
 // one place to change it; the last copy fetched is kept for when the server is
 // down.
 const SERVER_SETTINGS_KEY = "cn_server_settings";
-const SERVER_FIELDS = ["displayName", "autoCapture", "hideCaptions", "recordMic", "debug"];
+const SERVER_FIELDS = ["displayName", "autoCapture", "hideCaptions", "recordMic", "debug", "panelMode"];
 
 async function settings() {
   const local = { ...DEFAULTS, ...(await chrome.storage.sync.get(DEFAULTS)) };
@@ -108,10 +108,33 @@ async function drain() {
   }
 }
 
+/**
+ * The toolbar icon is the steady, off-screen signal of what ClearNote is doing:
+ * red REC while audio is recorded, grey ON while captions are captured, a count
+ * when lines are waiting to sync. Nothing blinks.
+ */
 async function badge() {
   const { [QUEUE_KEY]: q = [] } = await chrome.storage.local.get(QUEUE_KEY);
-  await chrome.action.setBadgeBackgroundColor({ color: q.length ? "#f0b429" : "#3ddc84" });
-  await chrome.action.setBadgeText({ text: q.length ? String(Math.min(q.length, 99)) : "" });
+  const { [REC_KEY]: rec = null, [SESSIONS_KEY]: sessions = {} } = await chrome.storage.session.get([REC_KEY, SESSIONS_KEY]);
+  let text = "";
+  let color = "#52525b";
+  let title = "ClearNote";
+  if (rec) {
+    text = "REC";
+    color = "#dc2626";
+    title = "ClearNote: recording audio and captions";
+  } else if (Object.keys(sessions).length) {
+    text = "ON";
+    title = "ClearNote: capturing captions";
+  }
+  if (q.length && !rec) {
+    text = String(Math.min(q.length, 99));
+    color = "#b45309";
+    title = `ClearNote: ${q.length} batches waiting to sync`;
+  }
+  await chrome.action.setBadgeBackgroundColor({ color });
+  await chrome.action.setBadgeText({ text });
+  await chrome.action.setTitle({ title });
 }
 
 chrome.alarms.create("cn-drain", { periodInMinutes: 0.25 });
@@ -142,8 +165,7 @@ const handlers = {
     try {
       const { id } = await api("/api/sessions", payload);
       await rememberTabSession(sender.tab?.id, { sessionId: id, startedAt: payload.startedAt });
-      await chrome.action.setBadgeText({ text: "REC" });
-      await chrome.action.setBadgeBackgroundColor({ color: "#3ddc84" });
+      await badge();
       return { sessionId: id };
     } catch (err) {
       console.warn("[ClearNote] could not reach the server:", err.message);
@@ -174,7 +196,8 @@ const handlers = {
       body: payload,
     });
     await drain();
-    await chrome.action.setBadgeText({ text: "" });
+    await forgetTabSession(sender.tab?.id);
+    await badge();
     return { ok: true };
   },
 
@@ -195,7 +218,8 @@ const handlers = {
     return { ok: true };
   },
 
-  async recordingStopped() {
+  async recordingStopped({ reason } = {}) {
+    remoteLog(`audio recording stopped (${reason || "stopped"})`);
     const rec = await recording();
     await chrome.storage.session.remove(REC_KEY);
     if (rec) notifyTab(rec.tabId, false);
@@ -247,6 +271,13 @@ async function rememberTabSession(tabId, info) {
   await chrome.storage.session.set({ [SESSIONS_KEY]: sessions });
 }
 
+async function forgetTabSession(tabId) {
+  if (tabId == null) return;
+  const { [SESSIONS_KEY]: sessions = {} } = await chrome.storage.session.get(SESSIONS_KEY);
+  delete sessions[tabId];
+  await chrome.storage.session.set({ [SESSIONS_KEY]: sessions });
+}
+
 async function recording() {
   const { [REC_KEY]: rec = null } = await chrome.storage.session.get(REC_KEY);
   return rec;
@@ -254,6 +285,15 @@ async function recording() {
 
 function notifyTab(tabId, on, extra = {}) {
   chrome.tabs.sendMessage(tabId, { type: "recordingState", payload: { on, ...extra } }).catch(() => {});
+}
+
+/** Send a line to the server's log. Never throws. */
+async function remoteLog(message, level = "info") {
+  try {
+    await api("/api/log", { message, level });
+  } catch {
+    /* server down: nothing to do */
+  }
 }
 
 async function ensureOffscreen() {
@@ -267,6 +307,17 @@ async function ensureOffscreen() {
 }
 
 async function startRecording(tabId, streamId) {
+  try {
+    const r = await startRecordingInner(tabId, streamId);
+    remoteLog(r.ok ? `audio recording started (mic: ${r.mic ? "yes" : "no"})` : `audio recording did not start: ${r.error}`, r.ok ? "info" : "error");
+    return r;
+  } catch (err) {
+    remoteLog(`audio recording failed: ${err.message}`, "error");
+    return { ok: false, error: err.message };
+  }
+}
+
+async function startRecordingInner(tabId, streamId) {
   const { [SESSIONS_KEY]: sessions = {} } = await chrome.storage.session.get(SESSIONS_KEY);
   const session = sessions[tabId];
   if (!session) return { ok: false, error: "ClearNote has not started capturing this call yet." };
@@ -291,8 +342,7 @@ async function startRecording(tabId, streamId) {
   if (!res?.ok) return { ok: false, error: res?.error || "Could not start recording." };
   await chrome.storage.session.set({ [REC_KEY]: { tabId, sessionId: session.sessionId, mic: res.mic, at: Date.now() } });
   notifyTab(tabId, true, { mic: res.mic });
-  await chrome.action.setBadgeText({ text: "AUD" });
-  await chrome.action.setBadgeBackgroundColor({ color: "#f0734a" });
+  await badge();
   return { ok: true, mic: res.mic };
 }
 
@@ -318,4 +368,6 @@ chrome.commands.onCommand.addListener(async (command, tab) => {
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   const rec = await recording();
   if (rec?.tabId === tabId) await stopRecording("tab_closed");
+  await forgetTabSession(tabId);
+  await badge();
 });

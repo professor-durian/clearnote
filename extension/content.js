@@ -152,8 +152,12 @@
       CN.log(`debug mode on — __clearnote.show() reports what ${adapter.label} is exposing`);
     }
 
-    if (isTop) {
+    // "full" panel, "compact" pill, or "hidden" (nothing on the page; the
+    // ClearNote icon in Chrome's toolbar still shows the state).
+    const panelMode = settings.panelMode || "compact";
+    if (isTop && panelMode !== "hidden") {
       sidebar = new CN.Sidebar({
+        collapsed: panelMode === "compact",
         dashboardUrl: settings.dashboardUrl || "http://localhost:8787",
         debug: CN.debug,
         onToggleCapture: () => {
@@ -332,6 +336,7 @@
     if (msg?.type !== "recordingState" || !isTop) return;
     const { on, mic, error } = msg.payload || {};
     paint({
+      recordingAudio: !!on && !error,
       note: error
         ? error
         : on

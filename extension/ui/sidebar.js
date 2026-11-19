@@ -31,10 +31,8 @@
       background: var(--cn-mark) center/contain no-repeat; }
     .title { font-size: 13px; font-weight: 650; letter-spacing: .01em; }
     .spacer { flex: 1; }
-    .dot { width: 8px; height: 8px; border-radius: 50%; background: #5b6675; flex: none; }
-    .dot.live { background: #3ddc84; box-shadow: 0 0 0 4px rgba(61,220,132,.16); animation: pulse 2s infinite; }
-    .dot.warn { background: #f0b429; }
-    @keyframes pulse { 50% { opacity: .45; } }
+    .state { font-size: 11px; color: #8b97a6; white-space: nowrap; }
+    .state.warn { color: #f0b429; }
     .iconbtn { background: none; border: 0; color: #8b97a6; cursor: pointer;
       font-size: 15px; line-height: 1; padding: 4px 6px; border-radius: 6px; }
     .iconbtn:hover { background: #222b36; color: #e6edf3; }
@@ -67,14 +65,14 @@
   `;
 
   class Sidebar {
-    constructor({ dashboardUrl, onToggleCapture, debug = false, onDiagnose, onRecord }) {
+    constructor({ dashboardUrl, onToggleCapture, debug = false, onDiagnose, onRecord, collapsed = false }) {
       this.dashboardUrl = dashboardUrl;
       this.onToggleCapture = onToggleCapture;
       this.debug = debug;
       this.onDiagnose = onDiagnose;
       this.onRecord = onRecord;
       this.recording = false;
-      this.collapsed = false;
+      this.collapsed = collapsed;
       this.host = document.createElement("div");
       this.host.id = "clearnote-host";
       this.root = this.host.attachShadow({ mode: "open" });
@@ -108,7 +106,7 @@
       if (this.collapsed) {
         this.body.innerHTML = `<div class="collapsed"><span class="mark"></span>
           <span class="title">ClearNote</span>
-          <span class="dot ${s.status === "capturing" ? "live" : s.status === "error" ? "warn" : ""}"></span></div>`;
+          <span class="state ${s.status === "error" ? "warn" : ""}">${esc(this._short(s))}</span></div>`;
         this.body.querySelector(".collapsed").onclick = () => {
           this.collapsed = false;
           this.render();
@@ -135,8 +133,7 @@
           <div class="head" part="head">
             <span class="mark"></span><span class="title">ClearNote</span>
             <span class="spacer"></span>
-            <span class="dot ${s.status === "capturing" ? "live" : s.status === "error" ? "warn" : ""}"></span>
-            <button class="iconbtn" data-act="collapse" title="Collapse">–</button>
+            <button class="iconbtn" data-act="collapse" title="Make small">–</button>
           </div>
           <div class="meta">
             <span><b>${s.segments.filter((x) => !x.partial).length}</b> lines</span>
@@ -180,6 +177,15 @@
 
       const feed = this.body.querySelector(".feed");
       if (feed) feed.scrollTop = feed.scrollHeight;
+    }
+
+    /** One or two words for the small pill. */
+    _short(s) {
+      if (s.recordingAudio) return "recording audio";
+      if (s.status === "capturing") return "on";
+      if (s.status === "paused") return "paused";
+      if (s.status === "error") return "needs attention";
+      return "waiting";
     }
 
     _drag() {

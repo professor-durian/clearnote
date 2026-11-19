@@ -263,6 +263,20 @@ app.post(
   }),
 );
 
+// The extension reports recording events and failures here, so they show in
+// ~/Library/Logs/clearnote.log next to everything else.
+app.post(
+  "/api/log",
+  requireToken,
+  wrap((req, res) => {
+    const { level = "info", message = "" } = req.body || {};
+    const line = `[extension] ${String(message).slice(0, 500)}`;
+    if (level === "error") console.error(line);
+    else console.log(line);
+    res.json({ ok: true });
+  }),
+);
+
 // Spending log for the Settings › Usage tab.
 app.get("/api/usage", ownOrigin, (_req, res) => res.json(usageReport()));
 

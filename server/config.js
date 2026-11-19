@@ -21,6 +21,7 @@ export const FIELDS = {
   autoCapture: { default: true },
   hideCaptions: { default: true },
   recordMic: { default: true },
+  panelMode: { default: "compact" }, // in-call panel: "full" | "compact" | "hidden"
   debug: { default: false },
   // AI
   aiPrimary: { default: "anthropic" }, // "anthropic" | "openrouter"
@@ -52,7 +53,7 @@ export const FIELDS = {
   googleClientSecret: { env: "GOOGLE_CLIENT_SECRET", secret: true, default: "" },
 };
 
-export const EXTENSION_FIELDS = ["displayName", "autoCapture", "hideCaptions", "recordMic", "debug"];
+export const EXTENSION_FIELDS = ["displayName", "autoCapture", "hideCaptions", "recordMic", "debug", "panelMode"];
 
 let cache = null;
 
@@ -95,6 +96,7 @@ export function update(patch = {}) {
   }
   if (next.aiPrimary && !["anthropic", "openrouter"].includes(next.aiPrimary)) next.aiPrimary = "anthropic";
   if (next.saveAudio && !["off", "drive", "local"].includes(next.saveAudio)) next.saveAudio = "off";
+  if (next.panelMode && !["full", "compact", "hidden"].includes(next.panelMode)) next.panelMode = "compact";
   mkdirSync(path.dirname(FILE), { recursive: true, mode: 0o700 });
   const tmp = `${FILE}.tmp`;
   writeFileSync(tmp, JSON.stringify(next, null, 2), { mode: 0o600 });

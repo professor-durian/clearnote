@@ -716,6 +716,12 @@ async function renderSettings(tabName = "general") {
           ${input("displayName", "Your name", "e.g. Ada Lovelace", "Captions call you “You”. This puts your name in transcripts and notes.")}
           ${sw("autoCapture", "Capture every meeting automatically", "Captions start when you join a Meet, Zoom or Teams call in Chrome.")}
           ${sw("hideCaptions", "Hide the platform's caption overlay", "Captions stay on so ClearNote can read them, but off your screen.")}
+          <sl-radio-group data-key="panelMode" label="ClearNote on the meeting page" value="${esc(v.panelMode || "compact")}"
+            help-text="Whatever you pick, the ClearNote icon in Chrome's toolbar shows the state without blinking: ON while captions are captured, a red REC while audio is recorded. It isn't visible when you share a single tab or window.">
+            <sl-radio value="full">Full panel with the live transcript</sl-radio>
+            <sl-radio value="compact">Small label only (click it to open the panel)</sl-radio>
+            <sl-radio value="hidden">Nothing on the page</sl-radio>
+          </sl-radio-group>
         </div></sl-tab-panel>
 
         <sl-tab-panel name="recording"><div class="panel stack">
