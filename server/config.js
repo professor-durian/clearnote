@@ -22,6 +22,10 @@ export const FIELDS = {
   hideCaptions: { default: true },
   recordMic: { default: true },
   panelMode: { default: "compact" },
+  syncDrive: { default: true }, // share finished meetings with your other computers through Google Drive
+  deviceName: { default: "" }, // shown on meetings recorded here, on your other computers
+  deviceId: { default: "" },
+  syncFolderId: { default: "" },
   enhanceTranscripts: { default: "off" }, // "off" | "local": transcribe recorded audio on this Mac to improve caption transcripts
   oneClickRecord: { default: false }, // start the ticked choices as soon as the popup opens // in-call panel: "full" | "compact" | "hidden"
   debug: { default: false },

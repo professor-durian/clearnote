@@ -30,6 +30,8 @@ import * as rules from "./rules.js";
 import { toText, filenameFor } from "./export.js";
 import { registerAudioRoutes, processAudio, audioFields, resumePending, deleteAudio, onAudioDone } from "./audio.js";
 import { saveMeeting, scheduleSave, exportStatus, fillName, PART_KEYS } from "./save.js";
+import { syncNow, syncState, startSyncLoop, markDeleted, onMeetingReceived, onMeetingRemoved } from "./sync.js";
+import { versionInfo, checkForUpdate, updateState, applyUpdate, startUpdateChecks } from "./update.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -628,8 +630,10 @@ app.get(
 app.delete(
   "/api/meetings/:id",
   wrap((req, res) => {
+    const synced = db.prepare(`SELECT sync_file_id FROM meetings WHERE id = ?`).get(req.params.id);
     const info = db.prepare(`DELETE FROM meetings WHERE id = ?`).run(req.params.id);
     if (info.changes) deleteAudio(req.params.id);
+    if (info.changes && synced?.sync_file_id) markDeleted(req.params.id, synced.sync_file_id);
     res.json({ deleted: info.changes });
   }),
 );
@@ -723,6 +727,15 @@ app.patch(
   }),
 );
 
+// ------------------------------------------------------------------ sync & updates
+
+app.get("/api/sync", ownOrigin, (_req, res) => res.json(syncState()));
+app.post("/api/sync/now", ownOrigin, wrap(async (_req, res) => res.json(await syncNow())));
+app.get("/api/version", wrap(async (_req, res) => res.json(await versionInfo())));
+app.get("/api/update", ownOrigin, (_req, res) => res.json(updateState()));
+app.post("/api/update/check", ownOrigin, wrap(async (_req, res) => res.json(await checkForUpdate())));
+app.post("/api/update/apply", ownOrigin, wrap(async (_req, res) => res.json(await applyUpdate())));
+
 app.get("/api/action-items", wrap((_req, res) => res.json(openActionItems())));
 app.get("/api/tags", wrap((_req, res) => res.json(allTags())));
 app.get(
@@ -769,6 +782,19 @@ const stale = db
   .all();
 for (const row of stale) summarize(row.id).catch(() => {});
 resumePending();
+// Meetings from your other computers, and updates from GitHub. Not in tests.
+onMeetingReceived((id) => {
+  try {
+    people.syncMeetingPeople(id);
+  } catch {
+    /* the People list catches up on the next backfill */
+  }
+});
+onMeetingRemoved((id) => deleteAudio(id));
+if (!process.env.NODE_TEST_CONTEXT && !process.env.CLEARNOTE_NO_BACKGROUND) {
+  startSyncLoop(2 * 60 * 1000);
+  startUpdateChecks();
+}
 // Build the People list from meetings captured before it existed.
 setTimeout(() => {
   try {

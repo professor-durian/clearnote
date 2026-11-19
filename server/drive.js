@@ -5,13 +5,13 @@ import { readFileSync } from "node:fs";
 import { accessToken } from "./google.js";
 import * as config from "./config.js";
 
-const DRIVE = "https://www.googleapis.com/drive/v3";
-const UPLOAD = "https://www.googleapis.com/upload/drive/v3";
+export const DRIVE = "https://www.googleapis.com/drive/v3";
+export const UPLOAD = "https://www.googleapis.com/upload/drive/v3";
 const DOCS = "https://docs.googleapis.com/v1/documents";
 const FOLDER = "application/vnd.google-apps.folder";
 const GDOC = "application/vnd.google-apps.document";
 
-async function call(url, { method = "GET", body, headers = {}, raw = false } = {}) {
+export async function call(url, { method = "GET", body, headers = {}, raw = false } = {}) {
   const token = await accessToken();
   const res = await fetch(url, {
     method,

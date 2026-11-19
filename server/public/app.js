@@ -212,7 +212,7 @@ async function renderList({ q, tag: tagName, person } = {}) {
                         <a class="mtitle" href="#/m/${esc(m.id)}">${esc(m.title || "Untitled meeting")}</a>
                         <div class="headline">${esc(m.summary?.headline || m.platform_label || m.platform)}</div>
                       </td>
-                      <td style="white-space:nowrap">${when(m.started_at)}<div class="muted small">${duration(m)}</div></td>
+                      <td style="white-space:nowrap">${when(m.started_at)}<div class="muted small">${duration(m)}${m.sync_device ? ` · ${esc(m.sync_device)}` : ""}</div></td>
                       <td>${
                         m.people?.length
                           ? m.people.slice(0, 3).map((p) => `<a href="#/people/${p.id}" class="plink">${esc(p.name)}</a>`).join(", ") +
@@ -664,6 +664,52 @@ async function openEventPicker(m) {
 
 const NAME_TAGS = ["{title}", "{date}", "{time}", "{platform}", "{people}", "{part}", "{year}", "{month}", "{day}"];
 
+function showSync(st) {
+  const box = document.getElementById("syncstate");
+  const last = document.getElementById("synclast");
+  if (!box || !st) return;
+  box.innerHTML = st.error ? tag("Problem", "danger") : st.enabled ? tag("On", "success") : tag("Off", "neutral");
+  last.textContent = st.error
+    ? st.error
+    : st.lastAt
+      ? `Last synced ${when(st.lastAt)}: ${st.sent} sent, ${st.received} received${st.removed ? `, ${st.removed} removed` : ""}.`
+      : st.enabled
+        ? "Not synced yet."
+        : "Needs Google connected with Drive.";
+}
+
+// ------------------------------------------------------------------ updates
+
+async function checkUpdates() {
+  const bar = document.getElementById("updatebar");
+  const u = await api("/update").catch(() => null);
+  if (!u?.behind) return (bar.hidden = true);
+  bar.hidden = false;
+  bar.innerHTML = `<sl-alert variant="primary" open>
+      <sl-icon slot="icon" name="arrow-up-circle"></sl-icon>
+      <div class="row"><b style="flex:1">A ClearNote update is ready (${u.behind} change${u.behind === 1 ? "" : "s"}).</b>
+        <sl-button size="small" id="upd-go" variant="primary" ${u.dirty ? "disabled" : ""}>Update now</sl-button></div>
+      <ul class="points small" style="margin:6px 0 0">${u.changes.map((c) => `<li>${esc(c)}</li>`).join("")}</ul>
+      ${u.dirty ? `<p class="small" style="margin:6px 0 0">This computer has its own changes to ClearNote's files, so it can't update with one click.</p>` : ""}
+    </sl-alert>`;
+  document.getElementById("upd-go").onclick = async (e) => {
+    e.target.loading = true;
+    const before = (await api("/version").catch(() => ({}))).commit;
+    const r = await api("/update/apply", { method: "POST", body: "{}" }).catch((err) => ({ error: err.message }));
+    if (!r.ok) {
+      e.target.loading = false;
+      return notify(r.error || "Update failed.", "danger");
+    }
+    bar.querySelector("b").textContent = "Updating and restarting ClearNote…";
+    for (let i = 0; i < 60; i++) {
+      await new Promise((ok) => setTimeout(ok, 2000));
+      const v = await api("/version").catch(() => null);
+      if (v?.commit && v.commit !== before) return location.reload();
+    }
+    notify("ClearNote didn't come back after the update. Check ~/Library/Logs/clearnote.log.", "danger");
+  };
+}
+
 function txSetupRow(audio) {
   if (!audio) return `<span class="muted">Couldn't check this Mac's transcription setup.</span>`;
   const st = audio.setup || {};
@@ -685,6 +731,24 @@ function wireTxSetup() {
     if (!document.body.contains(box)) return;
     box.innerHTML = txSetupRow(a);
     wireTxSetup();
+  showSync(sync);
+  document.getElementById("syncnow").onclick = async (e) => {
+    e.target.loading = true;
+    await save();
+    showSync(await api("/sync/now", { method: "POST", body: "{}" }).catch((err) => ({ error: err.message })));
+    e.target.loading = false;
+  };
+  document.getElementById("updcheck").onclick = async (e) => {
+    e.target.loading = true;
+    const u = await api("/update/check", { method: "POST", body: "{}" }).catch((err) => ({ error: err.message }));
+    e.target.loading = false;
+    document.getElementById("updresult").innerHTML = u.error
+      ? tag(`Couldn't check: ${u.error}`, "danger")
+      : u.behind
+        ? tag(`${u.behind} new change${u.behind === 1 ? "" : "s"}: use the banner at the top to update`, "primary")
+        : tag("Up to date", "success");
+    checkUpdates();
+  };
     if (a?.setup?.running) setTimeout(poll, 1500);
   };
   const go = document.getElementById("txsetup-go");
@@ -700,11 +764,14 @@ async function renderSettings(tabName = "general") {
   const flash = new URLSearchParams(location.hash.split("?")[1] || "").get("google");
   if (flash) tabName = "connections";
   view.innerHTML = loading("Loading settings…");
-  const [cfg, status, audio] = await Promise.all([
+  const [cfg, status, audio, sync, ver] = await Promise.all([
     api("/settings"),
     api("/google/status"),
     api("/audio/status").catch(() => null),
+    api("/sync").catch(() => null),
+    api("/version").catch(() => null),
   ]);
+  const syncDevice = sync?.device;
   const v = cfg.values;
   const sec = cfg.secrets;
   const locked = new Set(cfg.locked);
@@ -887,6 +954,15 @@ async function renderSettings(tabName = "general") {
             }
           </div>
           ${status.connected ? `<div class="panel" id="upcoming"></div>` : ""}
+          <div class="panel stack">
+            <div class="row"><h2 style="margin:0">Your other computers</h2><span id="syncstate"></span></div>
+            <p class="muted" style="margin:0">Meetings captured on any of your computers show up on all of them. Each one shares its finished meetings
+              (transcript, summary, next steps, people; not audio) through a "ClearNote sync" folder in your Google Drive. Install ClearNote on the other
+              computer, paste the same Google client ID and secret, and connect the same Google account.</p>
+            ${sw("syncDrive", "Share meetings with my other computers")}
+            ${input("deviceName", "This computer's name", syncDevice || "", "Shown on meetings recorded here when you look at them on another computer.")}
+            <div class="row"><sl-button id="syncnow"><sl-icon slot="prefix" name="arrow-repeat"></sl-icon>Sync now</sl-button><span id="synclast" class="muted small"></span></div>
+          </div>
         </div></sl-tab-panel>
 
         <sl-tab-panel name="advanced"><div class="panel stack">
@@ -894,6 +970,11 @@ async function renderSettings(tabName = "general") {
           ${sw("debug", "Log capture details to the meeting page's console", "For fixing a meeting platform that stopped capturing.")}
           <p style="margin:0"><b>Settings file:</b> <code>${esc(cfg.file)}</code></p>
           <p class="muted" style="margin:0">The extension's server address and sync token are set in the extension's own options (right-click the ClearNote icon › Options).</p>
+          <h3>Updates</h3>
+          <p class="muted" style="margin:0">ClearNote checks <code>${esc(ver?.remote || "its GitHub copy")}</code> for new versions every few hours. Updating restarts the
+            server; the extension reloads itself within ten minutes, once no call is open.</p>
+          <div class="row"><span>Version <code>${esc(ver?.commit || "unknown")}</code></span>
+            <sl-button id="updcheck" size="small">Check now</sl-button><span id="updresult" class="small"></span></div>
         </div></sl-tab-panel>
       </sl-tab-group>
     </div>
@@ -1555,6 +1636,9 @@ qInput.addEventListener("sl-input", () => {
     location.hash = q ? `#/search/${encodeURIComponent(q)}` : "#/";
   }, 280);
 });
+
+checkUpdates();
+setInterval(checkUpdates, 30 * 60 * 1000);
 
 window.addEventListener("hashchange", () => {
   connectionsLoaded = false;

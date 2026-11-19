@@ -160,9 +160,44 @@ async function setIconState(state) {
 }
 
 chrome.alarms.create("cn-drain", { periodInMinutes: 0.25 });
+chrome.alarms.create("cn-update", { periodInMinutes: 10 });
 chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === "cn-drain") drain();
+  if (a.name === "cn-update") reloadIfUpdated();
 });
+
+// ---------------------------------------------------------------- updates
+// When the server has been updated (Settings › Advanced › Update, or a git
+// pull), the extension files on disk change too. Chrome only picks them up on
+// a reload, so reload, but never while a call or recording might be affected.
+
+const EXT_KEY = "cn_loaded_extension_commit";
+const CALL_TABS = ["https://meet.google.com/*", "https://*.zoom.us/*", "https://teams.microsoft.com/*", "https://teams.live.com/*"];
+
+async function reloadIfUpdated({ justLoaded = false } = {}) {
+  try {
+    const { serverUrl } = await settings();
+    const res = await fetch(`${serverUrl.replace(/\/$/, "")}/api/version`);
+    if (!res.ok) return;
+    const { extensionCommit } = await res.json();
+    if (!extensionCommit) return;
+    const { [EXT_KEY]: loaded } = await chrome.storage.local.get(EXT_KEY);
+    // Just (re)loaded: the files Chrome read are the ones on disk now.
+    if (!loaded || justLoaded) return chrome.storage.local.set({ [EXT_KEY]: extensionCommit });
+    if (loaded === extensionCommit) return;
+    const { [REC_KEY]: rec = null, [SESSIONS_KEY]: sessions = {} } = await chrome.storage.session.get([REC_KEY, SESSIONS_KEY]);
+    if (rec || Object.keys(sessions).length) return; // try again later
+    const callTabs = await chrome.tabs.query({ url: CALL_TABS });
+    if (callTabs.length) return; // a call page open now would lose its reader
+    await chrome.storage.local.set({ [EXT_KEY]: extensionCommit });
+    console.log("[ClearNote] new version on disk, reloading");
+    chrome.runtime.reload();
+  } catch {
+    /* server offline: try later */
+  }
+}
+chrome.runtime.onStartup.addListener(() => reloadIfUpdated({ justLoaded: true }));
+chrome.runtime.onInstalled.addListener(() => reloadIfUpdated({ justLoaded: true }));
 
 // ---------------------------------------------------------------- messages
 
