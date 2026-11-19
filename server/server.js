@@ -26,6 +26,7 @@ import * as config from "./config.js";
 import { listDirs, makeDir } from "./folders.js";
 import { usageReport, meetingUsage } from "./usage.js";
 import * as people from "./people.js";
+import * as rules from "./rules.js";
 import { toText, filenameFor } from "./export.js";
 import { registerAudioRoutes, processAudio, audioFields, resumePending, deleteAudio, onAudioDone } from "./audio.js";
 import { saveMeeting, scheduleSave, exportStatus, fillName, PART_KEYS } from "./save.js";
@@ -93,7 +94,9 @@ app.post(
       url,
       startedAt: Number(startedAt),
     });
-    console.log(`[clearnote] capturing "${title}" (${platform}) -> ${id}`);
+    const decision = rules.evaluate({ url, platform, meetingKey, at: Number(startedAt) });
+    db.prepare(`UPDATE meetings SET rule_json = ? WHERE id = ?`).run(JSON.stringify(decision), id);
+    console.log(`[clearnote] capturing "${title}" (${platform}) -> ${id} [rule: ${decision.rule?.name || "none"}]`);
     res.json({ id });
   }),
 );
@@ -130,7 +133,12 @@ app.post(
 );
 
 registerAudioRoutes(app, { requireToken, wrap });
-onAudioDone((id) => scheduleSave(id, 1000));
+onAudioDone((id) => {
+  const m = db.prepare(`SELECT status, merged_json FROM meetings WHERE id = ?`).get(id);
+  const hasCaptions = db.prepare(`SELECT 1 FROM segments WHERE meeting_id = ? LIMIT 1`).get(id);
+  if (m && m.merged_json && !hasCaptions && m.status !== "ready") summarize(id).catch(() => {});
+  else scheduleSave(id, 1000);
+});
 
 // An edit in the dashboard (a transcript line, a title, an action item) updates
 // the saved notes a few seconds later.
@@ -184,7 +192,9 @@ app.patch(
   ownOrigin,
   wrap((req, res) => {
     const before = config.get("calendarIds");
-    config.update(req.body || {});
+    const body = { ...(req.body || {}) };
+    if ("rules" in body) body.rules = body.rules ? rules.normaliseRules(body.rules) : "";
+    config.update(body);
     if (config.get("calendarIds") !== before && google.connectionStatus().connected) {
       google.syncEvents().catch((err) => console.warn(`[clearnote] calendar sync failed: ${err.message}`));
     }
@@ -275,6 +285,16 @@ app.post(
     else console.log(line);
     res.json({ ok: true });
   }),
+);
+
+// Rules: what to do on a page. The extension asks before it shows anything.
+app.post(
+  "/api/rules/evaluate",
+  ownOrigin,
+  wrap((req, res) => res.json(rules.evaluate(req.body || {}))),
+);
+app.get("/api/rules", ownOrigin, (_req, res) =>
+  res.json({ rules: rules.getRules(), defaults: rules.DEFAULT_RULES, sites: rules.SITES, hosts: rules.HOSTS }),
 );
 
 // Spending log for the Settings › Usage tab.
@@ -461,12 +481,31 @@ async function summarize(meetingId, template) {
   }
 }
 
+// Meetings where you asked for a summary by hand, overriding a rule.
+const forceSummary = new Set();
+
 async function summarizeOnly(meetingId, template) {
   const meeting = db.prepare(`SELECT * FROM meetings WHERE id = ?`).get(meetingId);
-  const segments = getSegments(meetingId);
   if (!meeting) return;
-
+  const decision = rules.meetingRule(meeting);
+  if (decision && decision.actions?.summary === false && !template && !forceSummary.has(meetingId)) {
+    markUnsummarized(meetingId, `No summary: summaries are off for “${decision.rule?.name || "this kind of meeting"}” (Settings › Rules). Use Write summary to make one anyway.`);
+    return;
+  }
+  forceSummary.delete(meetingId);
+  let segments = getSegments(meetingId);
+  if (!segments.length && meeting.merged_json) {
+    // No captions (a website recorded by audio): summarise the audio transcript.
+    segments = JSON.parse(meeting.merged_json).map((l, i) => ({
+      id: i, seq: i, speaker: l.speaker, text: l.text, start_ms: l.startMs, end_ms: l.endMs,
+    }));
+  }
   if (!segments.length) {
+    const hasAudio = db.prepare(`SELECT 1 FROM audio_tracks WHERE meeting_id = ? AND bytes > 0`).get(meetingId);
+    if (hasAudio) {
+      markUnsummarized(meetingId, "Waiting for the audio transcript; the summary follows.");
+      return;
+    }
     markFailed(meetingId, "no captions were captured — were captions on in the call?");
     return;
   }
@@ -501,6 +540,7 @@ app.post(
   wrap(async (req, res) => {
     const id = resolveMeetingId(req.params.id);
     if (!id) return res.status(404).json({ error: "unknown meeting" });
+    forceSummary.add(id);
     await summarize(id, req.body?.template);
     res.json(getMeeting(id));
   }),

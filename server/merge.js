@@ -129,7 +129,7 @@ export function attributeTab(tabPhrases, captions) {
       prev && next
         ? out[i].startMs - prev.endMs <= next.startMs - out[i].endMs ? prev : next
         : prev || next;
-    out[i].speaker = pick ? pick.speaker : "Unknown";
+    out[i].speaker = pick ? pick.speaker : "Speaker";
   }
   return { phrases: out, lagMs: lag };
 }

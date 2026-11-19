@@ -704,6 +704,7 @@ async function renderSettings(tabName = "general") {
     <div class="settings">
       <sl-tab-group id="stabs" placement="start">
         <sl-tab slot="nav" panel="general">General</sl-tab>
+        <sl-tab slot="nav" panel="rules">Rules</sl-tab>
         <sl-tab slot="nav" panel="recording">Recording</sl-tab>
         <sl-tab slot="nav" panel="ai">AI</sl-tab>
         <sl-tab slot="nav" panel="usage">Usage</sl-tab>
@@ -716,13 +717,12 @@ async function renderSettings(tabName = "general") {
           ${input("displayName", "Your name", "e.g. Ada Lovelace", "Captions call you “You”. This puts your name in transcripts and notes.")}
           ${sw("autoCapture", "Capture every meeting automatically", "Captions start when you join a Meet, Zoom or Teams call in Chrome.")}
           ${sw("hideCaptions", "Hide the platform's caption overlay", "Captions stay on so ClearNote can read them, but off your screen.")}
-          <sl-radio-group data-key="panelMode" label="ClearNote on the meeting page" value="${esc(v.panelMode || "compact")}"
-            help-text="Whatever you pick, the ClearNote icon in Chrome's toolbar shows the state without blinking: ON while captions are captured, a red REC while audio is recorded. It isn't visible when you share a single tab or window.">
-            <sl-radio value="full">Full panel with the live transcript</sl-radio>
-            <sl-radio value="compact">Small label only (click it to open the panel)</sl-radio>
-            <sl-radio value="hidden">Nothing on the page</sl-radio>
-          </sl-radio-group>
+          <p class="field-hint" style="margin:0">What appears on a meeting page, and when ClearNote captures at all, is set per situation in
+            <a href="#/settings/rules">Rules</a>. The ClearNote icon in Chrome's toolbar always shows the state without blinking:
+            ON while captions are captured, a red REC while audio is recorded.</p>
         </div></sl-tab-panel>
+
+        <sl-tab-panel name="rules"><div id="rules" class="stack">${loading("Loading rules…")}</div></sl-tab-panel>
 
         <sl-tab-panel name="recording"><div class="panel stack">
           <h2>Recording and transcription</h2>
@@ -869,7 +869,11 @@ async function renderSettings(tabName = "general") {
     history.replaceState(null, "", `#/settings/${e.detail.name}`);
     if (e.detail.name === "connections" && status.connected) loadConnections();
     if (e.detail.name === "usage") loadUsage();
+    if (e.detail.name === "rules") loadRules();
+    toggleSavebar(e.detail.name);
   });
+  if (tabName === "rules") loadRules();
+  toggleSavebar(tabName);
   if (tabName === "connections" && status.connected) loadConnections();
   if (tabName === "usage") loadUsage();
 
@@ -981,6 +985,147 @@ async function renderSettings(tabName = "general") {
       renderSettings("connections");
     };
   }
+}
+
+// --------------------------------------------------------------- rules tab
+
+const SITE_LABELS = {
+  calls: "Any call (Meet, Zoom, Teams)",
+  meet: "Google Meet",
+  zoom: "Zoom",
+  teams: "Microsoft Teams",
+  youtube: "YouTube",
+  domains: "Websites I list",
+  any: "Anywhere",
+};
+const HOST_LABELS = { any: "Anyone hosts", me: "I host", others: "Someone else hosts", unknown: "Not on my calendar" };
+const CAPTION_LABELS = { auto: "Capture automatically", click: "When I click the icon", off: "Off" };
+const PANEL_LABELS = { full: "Full panel", compact: "Small label", hidden: "Nothing" };
+const AUDIO_LABELS = { click: "One click on the icon", off: "Off" };
+const CALL_SITES = ["calls", "meet", "zoom", "teams"];
+
+let rulesDraft = null;
+
+/** Rules and Usage have their own buttons; hide the page-wide Save there. */
+function toggleSavebar(tab) {
+  const bar = document.querySelector(".savebar");
+  if (bar) bar.hidden = tab === "rules" || tab === "usage";
+}
+
+async function loadRules() {
+  const box = document.getElementById("rules");
+  if (!box) return;
+  if (!rulesDraft) rulesDraft = (await api("/rules")).rules;
+  const opts = (map, val) => Object.entries(map).map(([k, l]) => `<sl-option value="${k}" ${k === val ? "selected" : ""}>${esc(l)}</sl-option>`).join("");
+  box.innerHTML = `
+    <div class="panel stack">
+      <div class="row"><h2 style="margin:0">Rules</h2><span class="spacer"></span>
+        <sl-button size="small" id="rules-reset">Reset to defaults</sl-button>
+        <sl-button size="small" id="rules-add"><sl-icon slot="prefix" name="plus-lg"></sl-icon>Add rule</sl-button></div>
+      <p class="muted" style="margin:0">What ClearNote does in each situation. Checked from the top; the first rule that fits decides.
+        Who hosts a call comes from your calendar: the event with that call's link says who organised it.</p>
+    </div>
+    ${rulesDraft
+      .map((r, i) => {
+        const isCall = CALL_SITES.includes(r.match.site);
+        return `<div class="panel stack rule" data-i="${i}">
+          <div class="row">
+            <span class="muted small" style="width:24px">${i + 1}.</span>
+            <sl-input size="small" data-f="name" value="${esc(r.name)}" style="flex:1" aria-label="Rule name"></sl-input>
+            <sl-icon-button name="arrow-up" label="Move up" data-move="-1" ${i === 0 ? "disabled" : ""}></sl-icon-button>
+            <sl-icon-button name="arrow-down" label="Move down" data-move="1" ${i === rulesDraft.length - 1 ? "disabled" : ""}></sl-icon-button>
+            <sl-icon-button name="trash" label="Delete rule" data-del></sl-icon-button>
+          </div>
+          <div class="rulegrid">
+            <sl-select size="small" label="Where" data-f="site" value="${esc(r.match.site)}" hoist>${opts(SITE_LABELS, r.match.site)}</sl-select>
+            ${
+              r.match.site === "domains"
+                ? `<sl-input size="small" label="Websites (comma-separated)" data-f="domains" value="${esc(r.match.domains.join(", "))}" placeholder="webinar.example.com, events.acme.com"></sl-input>`
+                : `<sl-select size="small" label="Host" data-f="host" value="${esc(r.match.host)}" ${isCall ? "" : "disabled"} hoist help-text="${isCall ? "" : "Only applies to calls"}">${opts(HOST_LABELS, r.match.host)}</sl-select>`
+            }
+            <sl-select size="small" label="Captions" data-f="captions" value="${esc(r.actions.captions)}" hoist>${opts(CAPTION_LABELS, r.actions.captions)}</sl-select>
+            <sl-select size="small" label="On the page" data-f="panel" value="${esc(r.actions.panel)}" hoist>${opts(PANEL_LABELS, r.actions.panel)}</sl-select>
+            <sl-select size="small" label="Audio" data-f="audio" value="${esc(r.actions.audio)}" hoist>${opts(AUDIO_LABELS, r.actions.audio)}</sl-select>
+          </div>
+          <div class="row" style="gap:18px">
+            <sl-switch size="small" data-f="summary" ${r.actions.summary ? "checked" : ""}>Summary</sl-switch>
+            <sl-switch size="small" data-f="saveNotes" ${r.actions.saveNotes ? "checked" : ""}>Save notes</sl-switch>
+            <sl-switch size="small" data-f="saveAudio" ${r.actions.saveAudio ? "checked" : ""}>Save audio</sl-switch>
+          </div>
+        </div>`;
+      })
+      .join("")}
+    <div class="row"><span class="spacer"></span><span class="muted small" id="rules-dirty"></span>
+      <sl-button variant="primary" id="rules-save">Save rules</sl-button></div>`;
+
+  const read = () => {
+    for (const card of box.querySelectorAll(".rule")) {
+      const r = rulesDraft[Number(card.dataset.i)];
+      const f = (k) => card.querySelector(`[data-f="${k}"]`);
+      r.name = f("name").value;
+      r.match.site = f("site").value;
+      if (f("domains")) r.match.domains = f("domains").value.split(/[,\s]+/).filter(Boolean);
+      if (f("host")) r.match.host = f("host").value;
+      for (const k of ["captions", "panel", "audio"]) r.actions[k] = f(k).value;
+      for (const k of ["summary", "saveNotes", "saveAudio"]) r.actions[k] = f(k).checked;
+    }
+  };
+  const dirty = () => (document.getElementById("rules-dirty").textContent = "Unsaved changes");
+  box.addEventListener("sl-input", dirty);
+  box.addEventListener("sl-change", (e) => {
+    dirty();
+    // Changing "Where" can swap the host field for a websites field.
+    if (e.target.dataset.f === "site") {
+      read();
+      loadRules();
+    }
+  });
+  for (const b of box.querySelectorAll("[data-move]")) {
+    b.onclick = () => {
+      read();
+      const i = Number(b.closest(".rule").dataset.i);
+      const j = i + Number(b.dataset.move);
+      [rulesDraft[i], rulesDraft[j]] = [rulesDraft[j], rulesDraft[i]];
+      loadRules().then(dirty);
+    };
+  }
+  for (const b of box.querySelectorAll("[data-del]")) {
+    b.onclick = () => {
+      read();
+      rulesDraft.splice(Number(b.closest(".rule").dataset.i), 1);
+      loadRules().then(dirty);
+    };
+  }
+  document.getElementById("rules-add").onclick = () => {
+    read();
+    rulesDraft.unshift({
+      id: `rule-${Date.now()}`,
+      name: "New rule",
+      match: { site: "domains", host: "any", domains: [] },
+      actions: { captions: "off", panel: "hidden", audio: "click", summary: true, saveNotes: true, saveAudio: true },
+    });
+    loadRules().then(dirty);
+  };
+  document.getElementById("rules-reset").onclick = async () => {
+    if (!confirm("Replace your rules with the defaults?")) return;
+    await api("/settings", { method: "PATCH", body: JSON.stringify({ rules: "" }) });
+    rulesDraft = null;
+    notify("Rules reset to the defaults.", "success");
+    loadRules();
+  };
+  document.getElementById("rules-save").onclick = async (e) => {
+    read();
+    e.target.loading = true;
+    try {
+      await api("/settings", { method: "PATCH", body: JSON.stringify({ rules: rulesDraft }) });
+      rulesDraft = null;
+      notify("Rules saved. They apply to calls and pages you open from now on.", "success");
+      loadRules();
+    } catch (err) {
+      notify(err.message, "danger");
+      e.target.loading = false;
+    }
+  };
 }
 
 const usd = (n) => (n == null ? "unknown" : n < 0.01 && n > 0 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`);

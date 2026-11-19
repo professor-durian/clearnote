@@ -16,6 +16,7 @@ import * as config from "./config.js";
 import * as drive from "./drive.js";
 import { connectionStatus } from "./google.js";
 import { FFMPEG_BIN } from "./transcribe.js";
+import { meetingRule } from "./rules.js";
 
 const run = promisify(execFile);
 
@@ -255,8 +256,10 @@ export async function saveMeeting(meetingId) {
     const meeting = getMeeting(meetingId);
     if (!meeting || !meeting.ended_at) return;
     const m = { ...meeting, ...audioFields(meetingId) };
-    const wantNotes = config.get("saveNotes");
-    const audioTo = config.get("saveAudio");
+    // Settings say where; the meeting's rule says whether.
+    const decision = meetingRule(meeting);
+    const wantNotes = config.get("saveNotes") && decision?.actions?.saveNotes !== false;
+    const audioTo = decision?.actions?.saveAudio === false ? "off" : config.get("saveAudio");
     if (!wantNotes && audioTo === "off") return;
     if (["recording", "transcribing"].includes(m.audioStatus)) return; // saved again when it finishes
 

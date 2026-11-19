@@ -152,9 +152,25 @@
       CN.log(`debug mode on — __clearnote.show() reports what ${adapter.label} is exposing`);
     }
 
+    // Rules (Settings › Rules) decide what happens on this call: capture now,
+    // wait for a click on the toolbar icon, or stay out of the way entirely.
+    let key = null;
+    try {
+      key = adapter.meetingKey();
+    } catch {
+      /* not known before joining on some platforms */
+    }
+    const decision = await send("evaluateRule", { url: location.href, platform: adapter.id, meetingKey: key });
+    const actions = decision?.actions || {
+      captions: settings.autoCapture === false ? "click" : "auto",
+      panel: settings.panelMode || "compact",
+    };
+    ruleName = decision?.rule?.name || "";
+    CN.log(`rule: ${ruleName || "(none)"} → captions ${actions.captions}, panel ${actions.panel}`);
+
     // "full" panel, "compact" pill, or "hidden" (nothing on the page; the
     // ClearNote icon in Chrome's toolbar still shows the state).
-    const panelMode = settings.panelMode || "compact";
+    const panelMode = actions.panel || "compact";
     if (isTop && panelMode !== "hidden") {
       sidebar = new CN.Sidebar({
         collapsed: panelMode === "compact",
@@ -180,12 +196,30 @@
           }
         },
       });
-      if (settings.autoCapture === false) {
-        paint({ status: "idle", statusText: "Auto-capture is off" });
-        return;
-      }
-      paint({ statusText: `Waiting to join the ${adapter.label} call` });
     }
+
+    if (actions.captions !== "auto") {
+      waitingForClick = true;
+      paint({
+        status: "idle",
+        statusText: "Not capturing",
+        note: `ClearNote isn't capturing this call (${ruleName || "your rules"}). To capture it anyway, click the ClearNote icon in Chrome's toolbar.`,
+      });
+      return; // capture() runs when the toolbar icon is clicked
+    }
+    await capture();
+  }
+
+  let waitingForClick = false;
+  let ruleName = "";
+  let captureStarted = false;
+
+  /** Join, turn on captions and stream them. Runs once per page. */
+  async function capture() {
+    if (captureStarted) return;
+    captureStarted = true;
+    waitingForClick = false;
+    if (isTop) paint({ status: "idle", statusText: `Waiting to join the ${adapter.label} call`, note: "" });
 
     CN.log(`adapter: ${adapter.id}, url: ${location.href}`);
     await adapter.waitForJoin();
@@ -343,6 +377,15 @@
           ? `Recording audio${mic ? " and your mic" : ""}. Stop from the ClearNote icon or Option+Shift+R.`
           : "Audio recording stopped. Captions continue.",
     });
+  });
+
+  // The toolbar icon asks this page to start capturing (rules said "on a click").
+  chrome.runtime.onMessage.addListener((msg, _sender, respond) => {
+    if (msg?.type !== "startCapture") return false;
+    if (!isTop && !session) return false;
+    capture().catch((err) => console.error("[ClearNote] capture failed", err));
+    respond({ ok: true, wasWaiting: waitingForClick });
+    return false;
   });
 
   boot().catch((err) => {

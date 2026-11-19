@@ -201,6 +201,45 @@ const handlers = {
     return { ok: true };
   },
 
+  // Rules: ask the server what to do on a page; remembered per tab.
+  async evaluateRule(payload, sender) {
+    return evaluateFor(sender.tab?.id, payload);
+  },
+
+  /** What the toolbar popup should offer on a tab. */
+  async pageInfo({ tabId, url }) {
+    const kind = pageKind(url);
+    const { [RULES_KEY]: cache = {} } = await chrome.storage.session.get(RULES_KEY);
+    const decision = cache[tabId] || (await evaluateFor(tabId, { url, platform: kind === "youtube" ? "youtube" : "" }));
+    return { kind, decision };
+  },
+
+  /** Audio-only recording of any page: a session with no captions. */
+  async startAudioOnly({ tabId, streamId, url, title }) {
+    const startedAt = Date.now();
+    let host = "web";
+    try {
+      host = new URL(url).hostname.replace(/^www\./, "");
+    } catch {
+      /* keep "web" */
+    }
+    const { id } = await api("/api/sessions", {
+      meetingKey: `web:${url}:${startedAt}`,
+      platform: "web",
+      platformLabel: host,
+      title: title || host,
+      url,
+      startedAt,
+    });
+    await rememberTabSession(tabId, { sessionId: id, startedAt, audioOnly: true });
+    const r = await startRecording(tabId, streamId);
+    if (!r.ok) {
+      await api(`/api/sessions/${encodeURIComponent(id)}/end`, { endedAt: Date.now(), reason: "recording_failed" }).catch(() => {});
+      await forgetTabSession(tabId);
+    }
+    return r;
+  },
+
   // Audio: started from the popup (a click on the extension is the gesture
   // Chrome requires before it lets an extension capture a tab's sound).
   async tabState({ tabId }) {
@@ -269,6 +308,32 @@ async function rememberTabSession(tabId, info) {
   const { [SESSIONS_KEY]: sessions = {} } = await chrome.storage.session.get(SESSIONS_KEY);
   sessions[tabId] = info;
   await chrome.storage.session.set({ [SESSIONS_KEY]: sessions });
+}
+
+const RULES_KEY = "cn_tab_rules";
+
+function pageKind(url = "") {
+  if (/^https:\/\/(meet\.google\.com|[\w.-]*zoom\.us|teams\.(microsoft|live)\.com|[\w.-]*cloud\.microsoft\.com)\//.test(url)) return "meeting";
+  if (/^https:\/\/(www\.|m\.)?youtube\.com\/watch/.test(url)) return "youtube";
+  if (/^https?:\/\//.test(url)) return "web";
+  return "none";
+}
+
+async function evaluateFor(tabId, payload) {
+  let decision = null;
+  try {
+    decision = await api("/api/rules/evaluate", payload);
+  } catch {
+    // Server down: behave as before rules existed.
+    const s = await settings();
+    decision = { rule: null, actions: { captions: s.autoCapture === false ? "click" : "auto", panel: s.panelMode || "compact", audio: "click" } };
+  }
+  if (tabId != null) {
+    const { [RULES_KEY]: cache = {} } = await chrome.storage.session.get(RULES_KEY);
+    cache[tabId] = decision;
+    await chrome.storage.session.set({ [RULES_KEY]: cache });
+  }
+  return decision;
 }
 
 async function forgetTabSession(tabId) {
@@ -349,10 +414,21 @@ async function startRecordingInner(tabId, streamId) {
 async function stopRecording(reason) {
   const rec = await recording();
   if (!rec) return;
+  const { [SESSIONS_KEY]: sessions = {} } = await chrome.storage.session.get(SESSIONS_KEY);
+  const audioOnly = sessions[rec.tabId]?.audioOnly ? sessions[rec.tabId] : null;
   const ctx = await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"] });
   if (ctx.length) await chrome.runtime.sendMessage({ target: "offscreen", type: "stop", payload: { reason } });
   await chrome.storage.session.remove(REC_KEY);
   notifyTab(rec.tabId, false);
+  if (audioOnly) {
+    // An audio-only recording is the whole session: end it so it gets transcribed and summarised.
+    await enqueue({
+      path: `/api/sessions/${encodeURIComponent(audioOnly.sessionId)}/end`,
+      body: { endedAt: Date.now(), reason },
+    });
+    drain();
+    await forgetTabSession(rec.tabId);
+  }
   await badge();
 }
 
@@ -361,7 +437,10 @@ chrome.commands.onCommand.addListener(async (command, tab) => {
   if (command !== "toggle-audio" || !tab?.id) return;
   const rec = await recording();
   if (rec?.tabId === tab.id) return stopRecording("stopped");
-  const res = await startRecording(tab.id);
+  const { [SESSIONS_KEY]: sessions = {} } = await chrome.storage.session.get(SESSIONS_KEY);
+  const res = sessions[tab.id]
+    ? await startRecording(tab.id)
+    : await handlers.startAudioOnly({ tabId: tab.id, streamId: await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id }), url: tab.url, title: tab.title });
   if (!res.ok) notifyTab(tab.id, false, { error: res.error });
 });
 

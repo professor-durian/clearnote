@@ -47,6 +47,8 @@ export const FIELDS = {
   partMixed: { default: "mixed" },
   partCall: { default: "call" },
   partMic: { default: "mic" },
+  // What to do in each situation (see rules.js); null = the built-in defaults
+  rules: { default: "" },
   // Google Calendar: which calendars to read, as a JSON list of calendar IDs
   calendarIds: { default: '["primary"]' },
   // Google Calendar
@@ -81,7 +83,7 @@ export function get(key) {
 function coerce(key, value) {
   const d = FIELDS[key].default;
   if (typeof d === "boolean") return value === true || value === "true";
-  if (Array.isArray(value)) return JSON.stringify(value.map(String));
+  if (value && typeof value === "object") return JSON.stringify(value);
   return String(value ?? "").trim();
 }
 
