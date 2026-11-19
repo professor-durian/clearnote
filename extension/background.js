@@ -23,7 +23,7 @@ const CLAIMS_KEY = "cn_claims";
 // one place to change it; the last copy fetched is kept for when the server is
 // down.
 const SERVER_SETTINGS_KEY = "cn_server_settings";
-const SERVER_FIELDS = ["displayName", "autoCapture", "hideCaptions", "recordMic", "debug", "panelMode"];
+const SERVER_FIELDS = ["displayName", "autoCapture", "hideCaptions", "recordMic", "debug", "panelMode", "oneClickRecord"];
 
 async function settings() {
   const local = { ...DEFAULTS, ...(await chrome.storage.sync.get(DEFAULTS)) };

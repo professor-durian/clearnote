@@ -182,7 +182,7 @@
     /** One or two words for the small pill. */
     _short(s) {
       if (s.recordingAudio) return "recording audio";
-      if (s.status === "capturing") return "on";
+      if (s.status === "capturing") return "captions on";
       if (s.status === "paused") return "paused";
       if (s.status === "error") return "needs attention";
       return "waiting";

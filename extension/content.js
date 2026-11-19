@@ -246,7 +246,7 @@
       paint({
         status: "capturing",
         statusText: "Capturing",
-        note: "To add audio: click the ClearNote icon, then Record audio (or Option+Shift+R).",
+        note: "Captions on. To record audio too, click the ClearNote icon in Chrome's toolbar (or press Option+Shift+R).",
       });
     }
     watchForEnd();

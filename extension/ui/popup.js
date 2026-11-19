@@ -36,6 +36,8 @@ paint();
 // Clicking the extension icon is the gesture Chrome needs before an extension
 // may capture a tab's sound, so the tab's stream id is fetched here.
 
+let autoStarted = false;
+
 async function paintAudio() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const btn = document.getElementById("rec");
@@ -59,7 +61,7 @@ async function paintAudio() {
       ? "Already recording another tab."
       : "Adds a local transcript from the audio. Shortcut: Option+Shift+R.";
     btn.disabled = !!st.busy;
-    btn.onclick = async () => {
+    const start = async () => {
       btn.textContent = "Starting…";
       let streamId;
       try {
@@ -72,6 +74,14 @@ async function paintAudio() {
       if (!res.ok) hint.textContent = res.error || "Could not start recording.";
       paintAudio();
     };
+    btn.onclick = start;
+    // One-click recording: opening ClearNote during a call starts recording.
+    // The click on the icon is the gesture Chrome requires, so it counts.
+    const s = await ask("getSettings");
+    if (s.oneClickRecord !== false && !st.busy && !autoStarted) {
+      autoStarted = true;
+      start();
+    }
   } else {
     btn.hidden = true;
     hint.textContent = "Join a call with captions running to record its audio.";

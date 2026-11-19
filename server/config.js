@@ -21,7 +21,8 @@ export const FIELDS = {
   autoCapture: { default: true },
   hideCaptions: { default: true },
   recordMic: { default: true },
-  panelMode: { default: "compact" }, // in-call panel: "full" | "compact" | "hidden"
+  panelMode: { default: "compact" },
+  oneClickRecord: { default: true }, // clicking the icon during a call starts recording // in-call panel: "full" | "compact" | "hidden"
   debug: { default: false },
   // AI
   aiPrimary: { default: "anthropic" }, // "anthropic" | "openrouter"
@@ -53,7 +54,7 @@ export const FIELDS = {
   googleClientSecret: { env: "GOOGLE_CLIENT_SECRET", secret: true, default: "" },
 };
 
-export const EXTENSION_FIELDS = ["displayName", "autoCapture", "hideCaptions", "recordMic", "debug", "panelMode"];
+export const EXTENSION_FIELDS = ["displayName", "autoCapture", "hideCaptions", "recordMic", "debug", "panelMode", "oneClickRecord"];
 
 let cache = null;
 
