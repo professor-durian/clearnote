@@ -25,6 +25,7 @@ import { analyzeMeeting, askMeeting, aiConfigured, providerOrder, testProvider }
 import * as config from "./config.js";
 import { listDirs, makeDir } from "./folders.js";
 import { usageReport, meetingUsage } from "./usage.js";
+import * as people from "./people.js";
 import { toText, filenameFor } from "./export.js";
 import { registerAudioRoutes, processAudio, audioFields, resumePending, deleteAudio, onAudioDone } from "./audio.js";
 import { saveMeeting, scheduleSave, exportStatus, fillName, PART_KEYS } from "./save.js";
@@ -142,7 +143,14 @@ app.use((req, res, next) => {
     let meetingId = m[2];
     if (m[1] === "segments") meetingId = db.prepare(`SELECT meeting_id FROM segments WHERE id = ?`).get(m[2])?.meeting_id;
     if (m[1] === "action-items") meetingId = db.prepare(`SELECT meeting_id FROM action_items WHERE id = ?`).get(m[2])?.meeting_id;
-    if (meetingId && db.prepare(`SELECT 1 FROM meetings WHERE id = ?`).get(meetingId)) scheduleSave(meetingId);
+    if (meetingId && db.prepare(`SELECT 1 FROM meetings WHERE id = ?`).get(meetingId)) {
+      try {
+        people.syncMeetingPeople(meetingId);
+      } catch (err) {
+        console.warn(`[clearnote] people sync failed: ${err.message}`);
+      }
+      scheduleSave(meetingId);
+    }
   });
   next();
 });
@@ -224,6 +232,34 @@ app.post(
       Object.keys(PART_KEYS).map((k) => [k, `${fillName(b.audioFileName ?? config.get("audioFileName"), m, { part: b[PART_KEYS[k]] ?? config.get(PART_KEYS[k]) })}.mp3`]),
     );
     res.json({ notes: fillName(b.notesDocName ?? config.get("notesDocName"), m), audio: parts, from: latest ? m.title : "a sample meeting" });
+  }),
+);
+
+// People you've met with.
+app.get(
+  "/api/people",
+  wrap((req, res) => res.json(people.listPeople({ q: req.query.q, sort: req.query.sort, includeHidden: req.query.hidden === "1" }))),
+);
+app.get(
+  "/api/people/:id",
+  wrap((req, res) => {
+    const p = people.getPerson(Number(req.params.id));
+    if (!p) return res.status(404).json({ error: "unknown person" });
+    res.json(p);
+  }),
+);
+app.patch(
+  "/api/people/:id",
+  wrap((req, res) => {
+    people.updatePerson(Number(req.params.id), req.body || {});
+    res.json(people.getPerson(Number(req.params.id)));
+  }),
+);
+app.post(
+  "/api/people/:id/merge",
+  wrap((req, res) => {
+    people.mergePeople(Number(req.params.id), Number(req.body?.into));
+    res.json(people.getPerson(Number(req.body?.into)));
   }),
 );
 
@@ -402,6 +438,11 @@ async function summarize(meetingId, template) {
   try {
     await summarizeOnly(meetingId, template);
   } finally {
+    try {
+      people.syncMeetingPeople(meetingId);
+    } catch (err) {
+      console.warn(`[clearnote] people sync failed: ${err.message}`);
+    }
     scheduleSave(meetingId, 1000);
   }
 }
@@ -474,7 +515,12 @@ app.post(
 app.get(
   "/api/meetings",
   wrap((req, res) => {
-    const rows = listMeetings({ q: req.query.q, tag: req.query.tag, limit: Number(req.query.limit) || 60 });
+    let rows = listMeetings({ q: req.query.q, tag: req.query.tag, limit: Number(req.query.limit) || (req.query.person ? 1000 : 60) });
+    if (req.query.person) {
+      const keep = people.meetingsWithPeople(String(req.query.person).split(","));
+      if (keep) rows = rows.filter((m) => keep.has(m.id));
+    }
+    const who = people.peopleForMeetings(rows.map((m) => m.id));
     // Per-row status for the list: transcript kind, audio, summary, saved copy.
     res.json(
       rows.map((m) => {
@@ -486,6 +532,7 @@ app.get(
           audioStatus: a.audioStatus,
           hasAudio: a.audioTracks.some((t) => t.bytes > 0),
           saved: { savedAt: s.savedAt, error: s.error, notesUrl: s.notesUrl },
+          people: who[m.id] || [],
         };
       }),
     );
@@ -657,3 +704,11 @@ const stale = db
   .all();
 for (const row of stale) summarize(row.id).catch(() => {});
 resumePending();
+// Build the People list from meetings captured before it existed.
+setTimeout(() => {
+  try {
+    people.syncAllPeople();
+  } catch (err) {
+    console.warn(`[clearnote] people backfill failed: ${err.message}`);
+  }
+}, 500);

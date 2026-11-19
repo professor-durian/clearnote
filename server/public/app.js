@@ -146,14 +146,27 @@ function wireMenus(byId) {
 
 let listFilter = "all";
 
-async function renderList({ q, tag: tagName } = {}) {
+async function renderList({ q, tag: tagName, person } = {}) {
   view.innerHTML = loading("Loading meetings…");
   const params = new URLSearchParams();
   if (q) params.set("q", q);
   if (tagName) params.set("tag", tagName);
-  const all = await api(`/meetings?${params}`);
+  if (person) params.set("person", person);
+  const [all, everyone] = await Promise.all([api(`/meetings?${params}`), api("/people?sort=meetings")]);
+  const picked = person ? person.split(",") : [];
 
   const title = q ? `Results for “${esc(q)}”` : tagName ? `Tagged “${esc(tagName)}” <a href="#/" class="small">clear</a>` : "Meetings";
+  const peoplePicker = everyone.length
+    ? `<sl-select id="pfilter" multiple clearable size="small" placeholder="Filter by people" max-options-visible="2" value="${esc(picked.join(" "))}" style="min-width:240px" hoist>
+        ${everyone.map((p) => `<sl-option value="${p.id}">${esc(p.name)} (${p.meetings})</sl-option>`).join("")}
+      </sl-select>`
+    : "";
+  if (!all.length && picked.length) {
+    view.innerHTML = `<h1>Meetings</h1><div class="row" style="margin-bottom:12px">${peoplePicker}</div>
+      <div class="empty"><b>No meetings with everyone you picked.</b><br/>Remove someone from the filter.</div>`;
+    wirePeopleFilter();
+    return;
+  }
   if (!all.length) {
     view.innerHTML = `<h1>${title}</h1><div class="empty">${
       q || tagName
@@ -178,6 +191,7 @@ async function renderList({ q, tag: tagName } = {}) {
         <h1>${title}</h1>
         <p class="sub" style="margin:0">${all.length} meeting${all.length === 1 ? "" : "s"}. Open one, or use ⋯ to redo a step.</p>
       </div>
+      ${peoplePicker}
       <sl-radio-group id="filter" value="${listFilter}" size="small">
         ${Object.entries(filters).map(([k, [label]]) => `<sl-radio-button value="${k}">${label}</sl-radio-button>`).join("")}
       </sl-radio-group>
@@ -199,7 +213,14 @@ async function renderList({ q, tag: tagName } = {}) {
                         <div class="headline">${esc(m.summary?.headline || m.platform_label || m.platform)}</div>
                       </td>
                       <td style="white-space:nowrap">${when(m.started_at)}<div class="muted small">${duration(m)}</div></td>
-                      <td>${m.participants.length ? esc(m.participants.slice(0, 3).join(", ")) + (m.participants.length > 3 ? ` +${m.participants.length - 3}` : "") : `<span class="muted">—</span>`}</td>
+                      <td>${
+                        m.people?.length
+                          ? m.people.slice(0, 3).map((p) => `<a href="#/people/${p.id}" class="plink">${esc(p.name)}</a>`).join(", ") +
+                            (m.people.length > 3 ? ` <span class="muted">+${m.people.length - 3}</span>` : "")
+                          : m.participants.length
+                            ? esc(m.participants.slice(0, 3).join(", "))
+                            : `<span class="muted">—</span>`
+                      }</td>
                       <td>${tag(...st.transcript)}</td>
                       <td>${tag(...st.summary)}</td>
                       <td>${m.saved?.error ? `<sl-tooltip content="${esc(m.saved.error)}">${tag(...st.drive)}</sl-tooltip>` : tag(...st.drive)}</td>
@@ -218,7 +239,17 @@ async function renderList({ q, tag: tagName } = {}) {
     route();
   });
   wireMenus((id) => all.find((m) => m.id === id));
+  wirePeopleFilter();
   if (all.some((m) => m.status === "processing" || ["recording", "transcribing"].includes(m.audioStatus))) refreshSoon();
+}
+
+function wirePeopleFilter() {
+  const sel = document.getElementById("pfilter");
+  if (!sel) return;
+  sel.addEventListener("sl-change", () => {
+    const ids = (Array.isArray(sel.value) ? sel.value : [sel.value]).filter(Boolean);
+    location.hash = ids.length ? `#/?person=${ids.join(",")}` : "#/";
+  });
 }
 
 let refreshTimer = null;
@@ -1105,6 +1136,170 @@ function chooseFolder(start, done) {
   });
 }
 
+// ------------------------------------------------------------------- people
+
+let peopleSort = "meetings";
+
+async function renderPeople() {
+  view.innerHTML = loading("Loading people…");
+  const list = await api(`/people?sort=${peopleSort}`);
+  if (!list.length) {
+    view.innerHTML = `<h1>People</h1><div class="empty"><b>No one yet.</b><br/>People appear here from the speakers in your calls
+      and the invitees on matched calendar events.</div>`;
+    return;
+  }
+  view.innerHTML = `
+    <div class="row" style="align-items:flex-end;margin-bottom:16px">
+      <div style="flex:1 1 300px">
+        <h1>People</h1>
+        <p class="sub" style="margin:0">${list.length} people you've met with, from call speakers and calendar invites.</p>
+      </div>
+      <sl-input id="pfind" size="small" placeholder="Find a person…" clearable style="width:220px"><sl-icon name="search" slot="prefix"></sl-icon></sl-input>
+      <sl-radio-group id="psort" value="${peopleSort}" size="small">
+        <sl-radio-button value="meetings">Most met</sl-radio-button>
+        <sl-radio-button value="recent">Recent</sl-radio-button>
+        <sl-radio-button value="name">A–Z</sl-radio-button>
+      </sl-radio-group>
+    </div>
+    <div class="tablebox">
+      <table class="meetings" style="min-width:720px">
+        <thead><tr><th>Person</th><th>Meetings</th><th>Spoke in</th><th>Last met</th><th>First met</th><th></th></tr></thead>
+        <tbody id="prows">
+          ${list
+            .map(
+              (p) => `<tr data-find="${esc(`${p.name} ${p.email || ""}`.toLowerCase())}">
+                <td><a class="mtitle" href="#/people/${p.id}">${esc(p.name)}</a><div class="muted small">${esc(p.email || "no email yet")}</div></td>
+                <td>${p.meetings}</td>
+                <td>${p.spoke}</td>
+                <td style="white-space:nowrap">${when(p.last_met)}</td>
+                <td style="white-space:nowrap" class="muted">${new Date(p.first_met).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" })}</td>
+                <td style="text-align:right"><sl-button size="small" href="#/?person=${p.id}">Meetings</sl-button></td>
+              </tr>`,
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>`;
+  document.getElementById("psort").addEventListener("sl-change", (e) => {
+    peopleSort = e.target.value;
+    renderPeople();
+  });
+  document.getElementById("pfind").addEventListener("sl-input", (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    for (const tr of document.querySelectorAll("#prows tr")) tr.hidden = !!q && !tr.dataset.find.includes(q);
+  });
+}
+
+async function renderPerson(id) {
+  view.innerHTML = loading("Loading…");
+  const [p, everyone] = await Promise.all([api(`/people/${id}`), api("/people?sort=name&hidden=1")]);
+  const others = everyone.filter((o) => o.id !== p.id);
+  const spoke = p.meetings.filter((m) => m.spoke).length;
+  view.innerHTML = `
+    <a href="#/people" class="small">← People</a>
+    <div class="mhead">
+      <div class="info">
+        <label class="sr" for="pname">Name</label>
+        <input class="edit-title" id="pname" value="${esc(p.name)}" />
+        <p class="muted" style="margin:4px 0 8px">${p.email ? esc(p.email) : "No email yet"} · ${p.meetings.length} meeting${p.meetings.length === 1 ? "" : "s"} · spoke in ${spoke}
+          ${p.meetings.length ? ` · last met ${when(p.meetings[0].started_at)}` : ""}</p>
+        ${p.aliases.length > 1 ? `<p class="muted small" style="margin:0">Also appears as: ${esc(p.aliases.join(", "))}</p>` : ""}
+        ${p.hidden ? tag("Hidden from People", "warning") : ""}
+      </div>
+      <div class="row">
+        <sl-button href="#/?person=${p.id}"><sl-icon slot="prefix" name="funnel"></sl-icon>Filter meetings</sl-button>
+        <sl-dropdown placement="bottom-end" hoist id="pmore">
+          <sl-icon-button slot="trigger" name="three-dots" label="More"></sl-icon-button>
+          <sl-menu>
+            <sl-menu-item value="email"><sl-icon slot="prefix" name="envelope"></sl-icon>${p.email ? "Change email" : "Add email"}</sl-menu-item>
+            <sl-menu-item value="merge"><sl-icon slot="prefix" name="union"></sl-icon>Merge into another person…</sl-menu-item>
+            <sl-menu-item value="hide"><sl-icon slot="prefix" name="${p.hidden ? "eye" : "eye-slash"}"></sl-icon>${p.hidden ? "Show in People" : "Hide from People"}</sl-menu-item>
+          </sl-menu>
+        </sl-dropdown>
+      </div>
+    </div>
+
+    <div class="cols" style="margin-top:16px">
+      <div class="main">
+        <div class="tablebox">
+          <table class="meetings" style="min-width:600px">
+            <thead><tr><th>Meeting</th><th>When</th><th>Role</th></tr></thead>
+            <tbody>
+              ${p.meetings
+                .map(
+                  (m) => `<tr>
+                    <td><a class="mtitle" href="#/m/${esc(m.id)}">${esc(m.title || "Untitled meeting")}</a>
+                      <div class="headline">${esc(m.headline || m.platform_label || m.platform)}</div></td>
+                    <td style="white-space:nowrap">${when(m.started_at)}</td>
+                    <td>${m.spoke ? tag("Spoke", "primary") : m.response === "declined" ? tag("Declined") : tag("Invited")}</td>
+                  </tr>`,
+                )
+                .join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <aside class="side stack">
+        <section class="panel">
+          <h2>Open next steps</h2>
+          ${
+            p.actions.length
+              ? p.actions
+                  .map((a) => `<div style="padding:6px 0">${esc(a.text)}${a.due ? ` <span class="muted">(due ${esc(a.due)})</span>` : ""}
+                    <div class="small"><a href="#/m/${esc(a.meeting_id)}">${esc(a.title || "meeting")}</a></div></div>`)
+                  .join("")
+              : `<p class="muted" style="margin:0">None assigned to ${esc(p.name.split(" ")[0])}.</p>`
+          }
+        </section>
+      </aside>
+    </div>
+
+    <sl-dialog label="Merge ${esc(p.name)} into…" id="mergeDlg">
+      <p class="muted" style="margin-top:0">Use this when the same person appears twice, for example under a nickname in captions and their full name on the invite.
+        Their meetings and names move to the person you pick.</p>
+      <sl-select id="mergeInto" label="Merge into" placeholder="Choose a person" hoist>
+        ${others.map((o) => `<sl-option value="${o.id}">${esc(o.name)}${o.email ? ` (${esc(o.email)})` : ""}</sl-option>`).join("")}
+      </sl-select>
+      <sl-button slot="footer" id="mergeCancel">Cancel</sl-button>
+      <sl-button slot="footer" variant="primary" id="mergeGo">Merge</sl-button>
+    </sl-dialog>`;
+
+  const patch = (body) => api(`/people/${p.id}`, { method: "PATCH", body: JSON.stringify(body) });
+  const name = document.getElementById("pname");
+  name.onchange = async () => {
+    if (name.value.trim()) await patch({ name: name.value.trim() });
+    notify("Name updated.", "success");
+  };
+  const dlg = document.getElementById("mergeDlg");
+  document.getElementById("pmore").addEventListener("sl-select", async (e) => {
+    const v = e.detail.item.value;
+    if (v === "email") {
+      const next = prompt(`Email for ${p.name}:`, p.email || "");
+      if (next === null) return;
+      try {
+        await patch({ email: next.trim() || null });
+        renderPerson(p.id);
+      } catch (err) {
+        notify(/UNIQUE/.test(err.message) ? "Another person already has that email. Merge them instead." : err.message, "danger");
+      }
+    } else if (v === "merge") dlg.show();
+    else if (v === "hide") {
+      await patch({ hidden: !p.hidden });
+      notify(p.hidden ? "Shown in People again." : "Hidden from People. Their meetings are unchanged.");
+      renderPerson(p.id);
+    }
+  });
+  document.getElementById("mergeCancel").onclick = () => dlg.hide();
+  document.getElementById("mergeGo").onclick = async () => {
+    const into = document.getElementById("mergeInto").value;
+    if (!into) return;
+    await api(`/people/${p.id}/merge`, { method: "POST", body: JSON.stringify({ into: Number(into) }) });
+    dlg.hide();
+    notify("Merged.", "success");
+    location.hash = `#/people/${into}`;
+  };
+}
+
 // ------------------------------------------------------------- action items
 
 async function renderActions() {
@@ -1144,7 +1339,7 @@ function route() {
   clearTimeout(refreshTimer);
   const hash = location.hash.replace(/^#\/?/, "").split("?")[0];
   const [part, ...rest] = hash.split("/");
-  const section = ["actions", "settings"].includes(part) ? part : "meetings";
+  const section = ["actions", "settings", "people"].includes(part) ? part : "meetings";
   for (const a of document.querySelectorAll("[data-nav]")) a.classList.toggle("on", a.dataset.nav === section);
 
   const show = (p) =>
@@ -1153,10 +1348,13 @@ function route() {
     });
   if (part === "m" && rest[0]) return show(renderMeeting(rest[0], rest[1] || "notes"));
   if (part === "actions") return show(renderActions());
+  if (part === "people" && rest[0]) return show(renderPerson(rest[0]));
+  if (part === "people") return show(renderPeople());
   if (part === "settings") return show(renderSettings(rest[0] || "general"));
   if (part === "tag" && rest[0]) return show(renderList({ tag: decodeURIComponent(rest[0]) }));
   if (part === "search" && rest[0]) return show(renderList({ q: decodeURIComponent(rest.join("/")) }));
-  return show(renderList());
+  const person = new URLSearchParams(location.hash.split("?")[1] || "").get("person");
+  return show(renderList({ person }));
 }
 
 let qTimer;
