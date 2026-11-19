@@ -75,3 +75,15 @@ test("speakers in a YouTube video don't become people", () => {
   meeting("Never Gonna Give You Up", Date.UTC(2026, 10, 19), ["Rick Astley"], null, "youtube");
   assert.ok(!people.listPeople().some((p) => p.name === "Rick Astley"));
 });
+
+test("your other email addresses count as you", () => {
+  config.update({ otherEmails: "me.personal@example.com, other@example.org" });
+  meeting("Weekly sync", Date.UTC(2026, 10, 20), ["Scott", "Dana"], [
+    { email: "me.personal@example.com", name: "Scott P" },
+    { email: "dana@example.com", name: "Dana" },
+  ]);
+  const names = people.listPeople().map((p) => p.email);
+  assert.ok(!names.includes("me.personal@example.com"));
+  assert.ok(names.includes("dana@example.com"));
+  config.update({ otherEmails: "" });
+});

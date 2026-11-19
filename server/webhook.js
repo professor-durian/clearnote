@@ -271,12 +271,12 @@ function finishedSince(since) {
   return db
     .prepare(
       `SELECT id, platform FROM meetings
-        WHERE ended_at IS NOT NULL AND ended_at >= ? AND sync_device IS NULL
+        WHERE ended_at IS NOT NULL AND ended_at >= ? AND (sync_device IS NULL OR ?)
           AND status NOT IN ('live', 'processing')
           AND COALESCE(audio_status, '') NOT IN ('recording', 'transcribing')
         ORDER BY ended_at`,
     )
-    .all(since);
+    .all(since, config.get("webhookSendOthers") ? 1 : 0);
 }
 
 let running = false;

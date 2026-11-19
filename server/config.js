@@ -18,6 +18,7 @@ const FILE = process.env.CLEARNOTE_SETTINGS || path.join(os.homedir(), ".clearno
 export const FIELDS = {
   // capture (read by the extension)
   displayName: { default: "" },
+  otherEmails: { default: "" }, // more of your own addresses, comma-separated: you, not an attendee
   showActionItems: { default: true }, // "Action items" in the dashboard's top menu
   autoCapture: { default: true },
   hideCaptions: { default: true },
@@ -27,7 +28,8 @@ export const FIELDS = {
   webhookUrl: { default: "" },
   webhookSecret: { secret: true, default: "" },
   webhookSince: { default: 0 },
-  webhookKinds: { default: "call" }, // which captures go: any of call, youtube, web // meetings finished before this aren't sent unless asked
+  webhookKinds: { default: "call" },
+  webhookSendOthers: { default: false }, // also send captures made on your other computers (arrived through sync) // which captures go: any of call, youtube, web // meetings finished before this aren't sent unless asked
   syncDrive: { default: true }, // share finished meetings with your other computers through Google Drive
   deviceName: { default: "" }, // shown on meetings recorded here, on your other computers
   deviceId: { default: "" },

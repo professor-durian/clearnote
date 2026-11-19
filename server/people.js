@@ -52,8 +52,13 @@ export function isSelf(name, email) {
   if (n === "you" || n === "me") return true;
   const mine = norm(config.get("displayName"));
   if (mine && n === mine) return true;
+  if (!email) return false;
+  const e = email.toLowerCase();
   const acct = db.prepare(`SELECT email FROM google_account WHERE id = 1`).get()?.email;
-  return !!(email && acct && email.toLowerCase() === acct.toLowerCase());
+  if (acct && e === acct.toLowerCase()) return true;
+  return String(config.get("otherEmails") || "")
+    .split(/[\s,;]+/)
+    .some((x) => x && x.toLowerCase() === e);
 }
 
 /** Find or create the person for a name and (optional) email. */

@@ -913,6 +913,7 @@ async function renderSettings(tabName = "general") {
           <h2>General</h2>
           ${input("displayName", "Your name", "e.g. Ada Lovelace", "Captions call you “You”. This puts your name in transcripts and notes.")}
           ${sw("autoCapture", "Capture every call automatically", "Captions start when you join a Meet, Zoom or Teams call in Chrome.")}
+          ${input("otherEmails", "Your other email addresses", "me@gmail.com, me@work.com", "So ClearNote knows they're you: you're left out of People and marked as yourself when captures are sent to another app.")}
           ${sw("showActionItems", "Show Action items in the menu", "Next steps still appear on each capture's page either way.")}
           ${sw("hideCaptions", "Hide the platform's caption overlay", "Captions stay on so ClearNote can read them, but off your screen.")}
           <p class="field-hint" style="margin:0">What appears on a call's page, and when ClearNote captures at all, is set per situation in
@@ -1077,6 +1078,7 @@ async function renderSettings(tabName = "general") {
                 const [k, label] = x.split(":");
                 return `<sl-checkbox data-kind="${k}" ${String(v.webhookKinds || "call").split(",").includes(k) ? "checked" : ""}>${label}</sl-checkbox>`;
               }).join("")}</div>
+            ${sw("webhookSendOthers", "Also send captures from my other computers", "They arrive here through sync. Turn this on for one computer only, and leave the address empty on the others, so each capture is sent once.")}
             <div class="row"><sl-button id="hooktest">Send a test</sl-button><sl-button id="hookpast">Also send past captures</sl-button><span id="hookresult" class="small"></span></div>
           </div>
           <div class="panel stack">
