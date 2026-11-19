@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { db, resolveMeetingId, getSegments } from "./db.js";
 import { merge } from "./merge.js";
 import { transcribeFile, transcriptionStatus } from "./transcribe.js";
+import { MODEL_MB, brewPath, runSetup, setupState } from "./setup.js";
 import * as config from "./config.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -83,7 +84,7 @@ export function onAudioDone(fn) {
  * Transcribe any untranscribed tracks, then merge with the captions. Runs once
  * the meeting has ended and every started track is finished. Safe to call again.
  */
-export async function processAudio(meetingId, { force = false, myName = "" } = {}) {
+export async function processAudio(meetingId, { force = false, manual = false, myName = "" } = {}) {
   myName = myName || config.get("displayName");
   if (running.has(meetingId)) return;
   const meeting = db.prepare(`SELECT * FROM meetings WHERE id = ?`).get(meetingId);
@@ -100,9 +101,18 @@ export async function processAudio(meetingId, { force = false, myName = "" } = {
     return;
   }
 
+  // Improving a caption transcript with audio is optional. Off: the audio is
+  // kept as files and the captions stay the transcript. Audio-only recordings
+  // (no captions at all) are always transcribed when this Mac can.
+  if (hasCaptions && !manual && config.get("enhanceTranscripts") !== "local") {
+    setStatus.run("done", null, meetingId);
+    onDone(meetingId);
+    return;
+  }
+
   const ready = transcriptionStatus();
   if (!ready.ready) {
-    setStatus.run("waiting", `Transcription not set up: missing ${ready.missing.join(", ")}`, meetingId);
+    setStatus.run("waiting", "Transcription isn't set up on this Mac. Set it up in Settings › Recording, then use Re-transcribe.", meetingId);
     return;
   }
 
@@ -233,11 +243,19 @@ export function registerAudioRoutes(app, { requireToken, wrap }) {
     wrap((req, res) => {
       if (!tracksOf.all(req.params.id).length) return res.status(404).json({ error: "no audio for this meeting" });
       res.json({ ok: true });
-      processAudio(req.params.id, { force: true, myName: req.body?.myName || "" }).catch(() => {});
+      processAudio(req.params.id, { force: true, manual: true, myName: req.body?.myName || "" }).catch(() => {});
     }),
   );
 
-  app.get("/api/audio/status", (_req, res) => res.json(transcriptionStatus()));
+  app.get("/api/audio/status", (_req, res) =>
+    res.json({ ...transcriptionStatus(), setup: setupState(), homebrew: !!brewPath(), downloadMb: MODEL_MB }),
+  );
+  app.post("/api/audio/setup", requireToken, (req, res) => {
+    const origin = req.get("origin");
+    if (origin && origin !== `http://${req.get("host")}` && !origin.startsWith("chrome-extension://")) return res.sendStatus(403);
+    runSetup(resumePending);
+    res.json({ ok: true });
+  });
 }
 
 export function deleteAudio(meetingId) {

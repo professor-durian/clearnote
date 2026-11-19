@@ -11,17 +11,20 @@ import { promisify } from "node:util";
 
 const run = promisify(execFile);
 
-function findBin(envVar, name) {
-  if (process.env[envVar]) return process.env[envVar];
+/** Absolute path of a Homebrew-installed tool, or null if it isn't installed. */
+export function binPath(name) {
   for (const dir of ["/opt/homebrew/bin", "/usr/local/bin"]) {
     const p = path.join(dir, name);
     if (existsSync(p)) return p;
   }
-  return name; // fall back to PATH
+  return null;
 }
 
-export const WHISPER_BIN = findBin("CLEARNOTE_WHISPER_BIN", "whisper-cli");
-export const FFMPEG_BIN = findBin("CLEARNOTE_FFMPEG_BIN", "ffmpeg");
+const whisperBin = () => process.env.CLEARNOTE_WHISPER_BIN || binPath("whisper-cli");
+const ffmpegBin = () => process.env.CLEARNOTE_FFMPEG_BIN || binPath("ffmpeg");
+// Kept for callers that only need ffmpeg (MP3 export); falls back to PATH.
+export const FFMPEG_BIN = ffmpegBin() || "ffmpeg";
+
 export const MODEL =
   process.env.CLEARNOTE_WHISPER_MODEL ||
   path.join(os.homedir(), ".clearnote", "models", "ggml-large-v3-turbo-q5_0.bin");
@@ -33,11 +36,10 @@ const LANGUAGE = process.env.CLEARNOTE_WHISPER_LANGUAGE || "auto";
 
 export function transcriptionStatus() {
   const missing = [];
-  if (!existsSync(MODEL)) missing.push(`model (${MODEL})`);
-  if (!existsSync(VAD_MODEL)) missing.push(`VAD model (${VAD_MODEL})`);
-  for (const bin of [WHISPER_BIN, FFMPEG_BIN]) {
-    if (path.isAbsolute(bin) && !existsSync(bin)) missing.push(bin);
-  }
+  if (!existsSync(MODEL)) missing.push("speech model");
+  if (!existsSync(VAD_MODEL)) missing.push("silence model");
+  if (!whisperBin()) missing.push("whisper.cpp");
+  if (!ffmpegBin()) missing.push("ffmpeg");
   return { ready: missing.length === 0, missing, model: path.basename(MODEL) };
 }
 
@@ -61,11 +63,11 @@ export async function transcribeFile(file) {
   const base = file.replace(/\.[^.]+$/, "");
   const wav = `${base}.16k.wav`;
   try {
-    await run(FFMPEG_BIN, ["-y", "-loglevel", "error", "-i", file, "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", wav], {
+    await run(ffmpegBin() || "ffmpeg", ["-y", "-loglevel", "error", "-i", file, "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", wav], {
       maxBuffer: 1 << 24,
     });
     await run(
-      WHISPER_BIN,
+      whisperBin() || "whisper-cli",
       ["-m", MODEL, "-f", wav, "-l", LANGUAGE, "-ml", "1", "-sow", "-oj", "-of", base, "-np", "--vad", "-vm", VAD_MODEL],
       { maxBuffer: 1 << 26, timeout: 2 * 60 * 60 * 1000 },
     );

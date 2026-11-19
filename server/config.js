@@ -22,6 +22,7 @@ export const FIELDS = {
   hideCaptions: { default: true },
   recordMic: { default: true },
   panelMode: { default: "compact" },
+  enhanceTranscripts: { default: "off" }, // "off" | "local": transcribe recorded audio on this Mac to improve caption transcripts
   oneClickRecord: { default: false }, // start the ticked choices as soon as the popup opens // in-call panel: "full" | "compact" | "hidden"
   debug: { default: false },
   // AI

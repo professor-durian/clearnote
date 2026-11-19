@@ -65,8 +65,8 @@ function statusOf(m) {
   else if (["recording", "transcribing"].includes(m.audioStatus)) transcript = ["Transcribing…", "warning"];
   else if (m.audioStatus === "failed") transcript = ["Audio failed", "danger"];
   else if (m.audioStatus === "waiting") transcript = ["Audio waiting", "warning"];
-  else if (m.recordType === "merged") transcript = ["Audio and captions", "primary"];
-  else if (m.recordType === "partial") transcript = ["Audio (part of call)", "primary"];
+  else if (m.recordType === "merged") transcript = ["Enhanced", "primary"];
+  else if (m.recordType === "partial") transcript = ["Enhanced (part)", "primary"];
   else transcript = ["Captions only", "neutral"];
 
   const s = m.summary || {};
@@ -125,7 +125,7 @@ function actionMenu(m, { compact = true } = {}) {
     }
     <sl-menu>
       ${compact ? `<sl-menu-item value="open"><sl-icon slot="prefix" name="box-arrow-up-right"></sl-icon>Open</sl-menu-item>` : ""}
-      <sl-menu-item value="retranscribe" ${hasAudio ? "" : "disabled"}><sl-icon slot="prefix" name="soundwave"></sl-icon>Re-transcribe audio</sl-menu-item>
+      <sl-menu-item value="retranscribe" ${hasAudio ? "" : "disabled"}><sl-icon slot="prefix" name="soundwave"></sl-icon>Transcribe the audio</sl-menu-item>
       <sl-menu-item value="summary"><sl-icon slot="prefix" name="stars"></sl-icon>Regenerate summary</sl-menu-item>
       <sl-menu-item value="save"><sl-icon slot="prefix" name="cloud-upload"></sl-icon>Save to Drive again</sl-menu-item>
       <sl-menu-item value="drive" ${m.saved?.notesUrl ? "" : "disabled"}><sl-icon slot="prefix" name="google"></sl-icon>Open notes in Drive</sl-menu-item>
@@ -266,7 +266,7 @@ function refreshSoon() {
 // ----------------------------------------------------------- meeting page
 
 const RECORD_TYPE = {
-  merged: "Audio and captions",
+  merged: "Enhanced: words from the audio, speakers from the captions",
   partial: "Audio for part of the call, captions for the rest",
   captions: "Captions only",
 };
@@ -464,8 +464,8 @@ function transcriptPanel(m) {
       audio
         ? `<div class="row" style="margin-bottom:8px">
              <sl-radio-group id="txmode" value="audio" size="small">
-               <sl-radio-button value="audio">From audio</sl-radio-button>
-               <sl-radio-button value="captions">Captions</sl-radio-button>
+               <sl-radio-button value="audio">Enhanced</sl-radio-button>
+               <sl-radio-button value="captions">Captions only</sl-radio-button>
              </sl-radio-group>
              <span class="muted small" id="txhint">${esc(RECORD_TYPE[m.recordType] || "")}</span>
            </div>
@@ -664,6 +664,38 @@ async function openEventPicker(m) {
 
 const NAME_TAGS = ["{title}", "{date}", "{time}", "{platform}", "{people}", "{part}", "{year}", "{month}", "{day}"];
 
+function txSetupRow(audio) {
+  if (!audio) return `<span class="muted">Couldn't check this Mac's transcription setup.</span>`;
+  const st = audio.setup || {};
+  if (st.running) return `<sl-spinner></sl-spinner><span>${esc(st.step)}${st.pct != null ? ` ${st.pct}%` : ""}</span>`;
+  if (audio.ready)
+    return `${tag("Set up", "success")}<span>Transcribes on this Mac with whisper.cpp (${esc(audio.model)}). Nothing is sent anywhere.</span>`;
+  return `${tag("Not set up", "neutral")}
+    <span style="flex:1 1 260px">Needs whisper.cpp, ffmpeg and a speech model (about ${audio.downloadMb} MB download). Missing: ${esc(audio.missing.join(", "))}.
+      ${audio.homebrew ? "" : `Install Homebrew from brew.sh first.`}
+      ${st.error ? `<br><span style="color:var(--sl-color-danger-600)">${esc(st.error)}</span>` : ""}</span>
+    <sl-button id="txsetup-go" ${audio.homebrew ? "" : "disabled"}>Set up on this Mac</sl-button>`;
+}
+
+function wireTxSetup() {
+  const box = document.getElementById("txsetup");
+  if (!box) return;
+  const poll = async () => {
+    const a = await api("/audio/status").catch(() => null);
+    if (!document.body.contains(box)) return;
+    box.innerHTML = txSetupRow(a);
+    wireTxSetup();
+    if (a?.setup?.running) setTimeout(poll, 1500);
+  };
+  const go = document.getElementById("txsetup-go");
+  if (go) go.onclick = async () => {
+    go.loading = true;
+    await api("/audio/setup", { method: "POST", body: "{}" });
+    setTimeout(poll, 500);
+  };
+  if (box.querySelector("sl-spinner")) setTimeout(poll, 1500);
+}
+
 async function renderSettings(tabName = "general") {
   const flash = new URLSearchParams(location.hash.split("?")[1] || "").get("google");
   if (flash) tabName = "connections";
@@ -729,12 +761,15 @@ async function renderSettings(tabName = "general") {
           <h2>Recording and transcription</h2>
           ${sw("oneClickRecord", "Start straight away", "Clicking the ClearNote icon starts the ticked choices at once, without the Start button. Chrome requires that click either way; recording can't start on its own.")}
           ${sw("recordMic", "Record my microphone with the call", "Your voice on its own track, so the transcript knows which lines are yours. Chrome asks permission once, from the extension's own settings.")}
-          <div class="row">${tag(audio?.ready ? "Ready" : "Not set up", audio?.ready ? "success" : "warning")}
-            <span>${
-              audio?.ready
-                ? `Recorded audio is transcribed on this computer with whisper.cpp (${esc(audio.model)}). Nothing is sent anywhere.`
-                : `Missing: ${esc((audio?.missing || ["whisper.cpp"]).join(", "))}. See the README's audio section.`
-            }</span></div>
+          <h3>Improve transcripts with audio</h3>
+          <p class="muted" style="margin:0">Captions are the quick, free transcript and need nothing extra. When you also record a call's audio, ClearNote can transcribe it
+            on this Mac and combine it with the captions: more accurate words, with speaker names still taken from the captions.
+            Audio recorded on a page with no captions is always transcribed when this Mac is set up.</p>
+          <sl-select data-key="enhanceTranscripts" label="When a call has captions and audio" value="${esc(v.enhanceTranscripts)}">
+            <sl-option value="off">Keep the audio as files; captions are the transcript</sl-option>
+            <sl-option value="local">Improve the transcript using the audio, on this Mac</sl-option>
+          </sl-select>
+          <div class="row" id="txsetup">${txSetupRow(audio)}</div>
           <p class="field-hint" style="margin:0">To record: click the ClearNote icon in Chrome's toolbar, check the ticked choices, then Start. Or press Option+Shift+R.
             The icon itself shows the state: grey when idle, normal while capturing captions, muted red while recording audio.</p>
         </div></sl-tab-panel>
@@ -915,6 +950,7 @@ async function renderSettings(tabName = "general") {
       renderSettings(tabs.querySelector("sl-tab[active]")?.panel || tabName);
     };
   }
+  wireTxSetup();
   for (const b of view.querySelectorAll("[data-test]")) {
     b.onclick = async () => {
       const out = document.getElementById(`test-${b.dataset.test}`);
