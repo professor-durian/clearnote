@@ -305,6 +305,53 @@ tools/fixture-replay.js    the recording replayer
 tools/make-icons.mjs       draws the icon and writes every size
 ```
 
+## Send finished meetings to another app
+
+Settings › Connections › *Send finished meetings to another app* takes a web
+address. When a meeting is finished (ended, summarised, audio transcribed),
+ClearNote POSTs it there as JSON. If it changes later (a regenerated summary, a
+corrected line, an edited title) it is sent again. Failed deliveries are retried
+after 1, 2, 4 … minutes, up to every 6 hours. Only the computer that recorded a
+meeting sends it, so synced computers don't deliver it twice. A new address
+starts from now; *Also send past meetings* sends the rest.
+
+Headers:
+
+- `X-ClearNote-Event`: `meeting.finished`, `meeting.updated` or `test`
+- `X-ClearNote-Delivery`: a unique id per request
+- `X-ClearNote-Signature: sha256=<hex>`: with a signing secret set, the
+  HMAC-SHA256 of the raw body keyed by the secret
+
+Body:
+
+```json
+{
+  "event": "meeting.finished",
+  "version": 1,
+  "deliveryId": "…",
+  "sentAt": "2026-11-19T08:00:00.000Z",
+  "meeting": {
+    "id": "…",
+    "title": "Budget review",
+    "platform": "Google Meet",
+    "url": "https://meet.google.com/…",
+    "startedAt": "…", "endedAt": "…",
+    "recordedOn": "Scott’s MacBook Air",
+    "transcriptSource": "captions | audio+captions",
+    "summary": { "headline": "…", "tldr": "…", "keyPoints": [], "decisions": [], "openQuestions": [] },
+    "actionItems": [{ "text": "…", "owner": "…", "due": "…", "priority": "…", "done": false }],
+    "people": [{ "name": "…", "email": "…", "spoke": true }],
+    "calendarEvent": { "id": "…", "title": "…", "link": "…", "organizer": "…" },
+    "tags": [], "notes": null,
+    "transcript": [{ "speaker": "…", "text": "…", "startMs": 0, "endMs": 1500 }],
+    "links": { "dashboard": "http://localhost:8787/#/m/…", "notesDoc": "…", "audio": { "mixed": "…" } }
+  }
+}
+```
+
+Answer with any 2xx status to accept it. Use `meeting.id` as the key: an
+update replaces what you stored for that id.
+
 ## The icon
 
 `node tools/make-icons.mjs` draws it and writes `extension/icons/*.png` (16,

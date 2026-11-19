@@ -22,6 +22,10 @@ export const FIELDS = {
   hideCaptions: { default: true },
   recordMic: { default: true },
   panelMode: { default: "compact" },
+  // Send finished meetings to another app (a web address that accepts JSON)
+  webhookUrl: { default: "" },
+  webhookSecret: { secret: true, default: "" },
+  webhookSince: { default: 0 }, // meetings finished before this aren't sent unless asked
   syncDrive: { default: true }, // share finished meetings with your other computers through Google Drive
   deviceName: { default: "" }, // shown on meetings recorded here, on your other computers
   deviceId: { default: "" },

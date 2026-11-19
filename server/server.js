@@ -32,6 +32,7 @@ import { registerAudioRoutes, processAudio, audioFields, resumePending, deleteAu
 import { saveMeeting, scheduleSave, exportStatus, fillName, PART_KEYS } from "./save.js";
 import { syncNow, syncState, startSyncLoop, markDeleted, onMeetingReceived, onMeetingRemoved } from "./sync.js";
 import { versionInfo, checkForUpdate, updateState, applyUpdate, startUpdateChecks } from "./update.js";
+import { deliver, sendTest, webhookStatus, webhookRound, startWebhookLoop, resetDeliveries } from "./webhook.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -206,6 +207,11 @@ app.patch(
   wrap((req, res) => {
     const before = config.get("calendarIds");
     const body = { ...(req.body || {}) };
+    // A new address starts from now: past meetings go only when asked.
+    if ("webhookUrl" in body && body.webhookUrl !== config.get("webhookUrl")) {
+      body.webhookSince = Date.now();
+      resetDeliveries();
+    }
     if ("rules" in body) body.rules = body.rules ? rules.normaliseRules(body.rules) : "";
     config.update(body);
     if (config.get("calendarIds") !== before && google.connectionStatus().connected) {
@@ -741,6 +747,18 @@ app.patch(
 // ------------------------------------------------------------------ sync & updates
 
 app.get("/api/sync", ownOrigin, (_req, res) => res.json(syncState()));
+app.get("/api/webhook", ownOrigin, (_req, res) => res.json(webhookStatus()));
+app.post("/api/webhook/test", ownOrigin, wrap(async (_req, res) => res.json(await sendTest())));
+app.post(
+  "/api/webhook/send-past",
+  ownOrigin,
+  wrap(async (_req, res) => {
+    config.update({ webhookSince: 1 });
+    webhookRound().catch(() => {});
+    res.json({ ok: true });
+  }),
+);
+app.post("/api/meetings/:id/send", ownOrigin, wrap(async (req, res) => res.json(await deliver(req.params.id, { force: true }))));
 app.post("/api/sync/now", ownOrigin, wrap(async (_req, res) => res.json(await syncNow())));
 app.get("/api/version", wrap(async (_req, res) => res.json(await versionInfo())));
 app.get("/api/update", ownOrigin, (_req, res) => res.json(updateState()));
@@ -804,6 +822,7 @@ onMeetingReceived((id) => {
 onMeetingRemoved((id) => deleteAudio(id));
 if (!process.env.NODE_TEST_CONTEXT && !process.env.CLEARNOTE_NO_BACKGROUND) {
   startSyncLoop(2 * 60 * 1000);
+  startWebhookLoop();
   startUpdateChecks();
 }
 // Build the People list from meetings captured before it existed.

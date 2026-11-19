@@ -83,6 +83,10 @@ function statusOf(m) {
 
 // ----------------------------------------------------------- shared actions
 
+// Whether "Send finished meetings to another app" has an address (row menu item).
+let hookOn = false;
+api("/webhook").then((st) => (hookOn = !!st?.enabled)).catch(() => {});
+
 /** The redo actions, shared by the list's row menu and the meeting page. */
 async function runAction(action, m) {
   try {
@@ -102,6 +106,10 @@ async function runAction(action, m) {
       const r = await api(`/meetings/${m.id}/save`, { method: "POST", body: "{}" });
       if (r.error) notify(`Not saved: ${r.error}`, "danger");
       else notify("Saved again.", "success");
+    } else if (action === "send") {
+      const r = await api(`/meetings/${m.id}/send`, { method: "POST", body: "{}" });
+      if (r.ok) notify("Sent.", "success");
+      else notify(`Not sent: ${r.error}`, "danger");
     } else if (action === "delete") {
       const label = m.title || "Untitled meeting";
       if (!confirm(`Delete “${label}”?\n\nThe transcript, audio, action items and search entries go with it. Copies already saved to Drive stay there. This cannot be undone.`)) return;
@@ -128,6 +136,7 @@ function actionMenu(m, { compact = true } = {}) {
       <sl-menu-item value="retranscribe" ${hasAudio ? "" : "disabled"}><sl-icon slot="prefix" name="soundwave"></sl-icon>Transcribe the audio</sl-menu-item>
       <sl-menu-item value="summary"><sl-icon slot="prefix" name="stars"></sl-icon>Regenerate summary</sl-menu-item>
       <sl-menu-item value="save"><sl-icon slot="prefix" name="cloud-upload"></sl-icon>Save to Drive again</sl-menu-item>
+      ${hookOn ? `<sl-menu-item value="send"><sl-icon slot="prefix" name="send"></sl-icon>Send to app again</sl-menu-item>` : ""}
       <sl-menu-item value="drive" ${m.saved?.notesUrl ? "" : "disabled"}><sl-icon slot="prefix" name="google"></sl-icon>Open notes in Drive</sl-menu-item>
       <sl-menu-item value="txt"><sl-icon slot="prefix" name="download"></sl-icon>Download transcript (.txt)</sl-menu-item>
       <sl-divider></sl-divider>
@@ -664,6 +673,21 @@ async function openEventPicker(m) {
 
 const NAME_TAGS = ["{title}", "{date}", "{time}", "{platform}", "{people}", "{part}", "{year}", "{month}", "{day}"];
 
+async function showHook() {
+  const box = document.getElementById("hookstate");
+  if (!box) return;
+  const st = await api("/webhook").catch(() => null);
+  if (!st) return;
+  box.innerHTML = !st.enabled ? tag("Off", "neutral") : st.failing ? tag(`${st.failing} failing`, "danger") : tag("On", "success");
+  const res = document.getElementById("hookresult");
+  if (res && !res.innerHTML && st.enabled)
+    res.textContent = st.lastError && st.failing
+      ? `Last error: ${st.lastError}`
+      : st.lastSentAt
+        ? `${st.sent} sent, last ${when(st.lastSentAt)}.`
+        : "Nothing sent yet.";
+}
+
 function showSync(st) {
   const box = document.getElementById("syncstate");
   const last = document.getElementById("synclast");
@@ -992,6 +1016,16 @@ async function renderSettings(tabName = "general") {
           </div>
           ${status.connected ? `<div class="panel" id="upcoming"></div>` : ""}
           <div class="panel stack">
+            <div class="row"><h2 style="margin:0">Send finished meetings to another app</h2><span id="hookstate"></span></div>
+            <p class="muted" style="margin:0">When a meeting is finished, ClearNote sends it (title, people, summary, next steps and the full transcript) as JSON to this
+              address: your own notes system, an automation tool such as Zapier or n8n, or a script. Changes later on, such as a regenerated summary,
+              are sent again. Only the computer that recorded a meeting sends it.</p>
+            ${input("webhookUrl", "Address", "https://example.com/clearnote", "Must accept a POST with a JSON body. Leave empty to turn this off.")}
+            ${secret("webhookSecret", "Signing secret (optional)", "A long random string the receiver also knows")}
+            <p class="field-hint" style="margin:0">With a secret, each request carries <code>X-ClearNote-Signature: sha256=…</code>, an HMAC-SHA256 of the body, so the receiver can check it came from you.</p>
+            <div class="row"><sl-button id="hooktest">Send a test</sl-button><sl-button id="hookpast">Also send past meetings</sl-button><span id="hookresult" class="small"></span></div>
+          </div>
+          <div class="panel stack">
             <div class="row"><h2 style="margin:0">Your other computers</h2><span id="syncstate"></span></div>
             <p class="muted" style="margin:0">Meetings captured on any of your computers show up on all of them. Each one shares its finished meetings
               (transcript, summary, next steps, people; not audio) through a "ClearNote sync" folder in your Google Drive. Install ClearNote on the other
@@ -1070,6 +1104,22 @@ async function renderSettings(tabName = "general") {
   }
   wireTxSetup();
   loadModelPickers();
+  showHook();
+  document.getElementById("hooktest").onclick = async (e) => {
+    e.target.loading = true;
+    await save();
+    const r = await api("/webhook/test", { method: "POST", body: "{}" }).catch((err) => ({ ok: false, error: err.message }));
+    e.target.loading = false;
+    document.getElementById("hookresult").innerHTML = r.ok ? tag(`Received (HTTP ${r.status})`, "success") : tag(`Failed: ${r.error}`, "danger");
+  };
+  document.getElementById("hookpast").onclick = async (e) => {
+    e.target.loading = true;
+    await save();
+    await api("/webhook/send-past", { method: "POST", body: "{}" });
+    e.target.loading = false;
+    document.getElementById("hookresult").innerHTML = tag("Sending every past meeting in the background", "primary");
+    setTimeout(showHook, 5000);
+  };
   showSync(sync);
   document.getElementById("syncnow").onclick = async (e) => {
     e.target.loading = true;
