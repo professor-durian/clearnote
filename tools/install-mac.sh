@@ -15,7 +15,7 @@ fail() { printf '\n%s\n' "$1" >&2; exit 1; }
 
 command -v git >/dev/null 2>&1 || fail "git is missing. Run: xcode-select --install   then run this again."
 
-# Node: Homebrew's, nvm's or anything on PATH, version 20 or newer.
+# Node: Homebrew's, nvm's or anything on PATH, version 22 or newer.
 NODE="$(command -v node 2>/dev/null || true)"
 if [ -z "$NODE" ] && [ -s "$HOME/.nvm/nvm.sh" ]; then
   . "$HOME/.nvm/nvm.sh"
@@ -31,7 +31,7 @@ if [ -z "$NODE" ]; then
   fi
 fi
 MAJOR="$("$NODE" -p 'process.versions.node.split(".")[0]')"
-[ "$MAJOR" -ge 20 ] || fail "Node.js $MAJOR is too old; ClearNote needs 20 or newer."
+[ "$MAJOR" -ge 22 ] || fail "Node.js $MAJOR is too old; ClearNote needs 22 or newer."
 
 if [ -d "$DIR/.git" ]; then
   say "Updating $DIR"
