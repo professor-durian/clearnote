@@ -372,6 +372,13 @@ function notesPanel(m) {
         }
       </section>
       ${calendarPanel(m)}
+      ${
+        m.aiUsage?.calls
+          ? `<section class="panel"><h2>AI cost</h2><p style="margin:0"><b>${usd(m.aiUsage.cost)}</b>${m.aiUsage.exact ? "" : ` <span class="muted small">est.</span>`}
+              <span class="muted small">· ${m.aiUsage.calls} call${m.aiUsage.calls === 1 ? "" : "s"}</span></p>
+              <a href="#/settings/usage" class="small">Spending history</a></section>`
+          : ""
+      }
     </aside>
   </div>`;
 }
@@ -668,6 +675,7 @@ async function renderSettings(tabName = "general") {
         <sl-tab slot="nav" panel="general">General</sl-tab>
         <sl-tab slot="nav" panel="recording">Recording</sl-tab>
         <sl-tab slot="nav" panel="ai">AI</sl-tab>
+        <sl-tab slot="nav" panel="usage">Usage</sl-tab>
         <sl-tab slot="nav" panel="saving">Saving &amp; names</sl-tab>
         <sl-tab slot="nav" panel="connections">Connections</sl-tab>
         <sl-tab slot="nav" panel="advanced">Advanced</sl-tab>
@@ -708,6 +716,8 @@ async function renderSettings(tabName = "general") {
           ${input("openrouterModel", "Model", "anthropic/claude-opus-5.5", "Create a key at openrouter.ai. Any model ID from openrouter.ai/models works.")}
           <div class="row"><sl-button data-test="openrouter">Test OpenRouter</sl-button><span id="test-openrouter" class="small"></span></div>
         </div></sl-tab-panel>
+
+        <sl-tab-panel name="usage"><div id="usage" class="stack">${loading("Loading spending…")}</div></sl-tab-panel>
 
         <sl-tab-panel name="saving"><div class="stack">
           <div class="panel stack">
@@ -820,8 +830,10 @@ async function renderSettings(tabName = "general") {
   tabs.addEventListener("sl-tab-show", (e) => {
     history.replaceState(null, "", `#/settings/${e.detail.name}`);
     if (e.detail.name === "connections" && status.connected) loadConnections();
+    if (e.detail.name === "usage") loadUsage();
   });
   if (tabName === "connections" && status.connected) loadConnections();
+  if (tabName === "usage") loadUsage();
 
   const read = (el) => (el.tagName === "SL-SWITCH" || el.tagName === "SL-CHECKBOX" ? el.checked : el.value);
   const collect = () => {
@@ -931,6 +943,58 @@ async function renderSettings(tabName = "general") {
       renderSettings("connections");
     };
   }
+}
+
+const usd = (n) => (n == null ? "unknown" : n < 0.01 && n > 0 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`);
+const tokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n));
+const TASKS = { summary: "Summary", question: "Question", test: "Key test" };
+
+/** Settings › Usage: totals, by model, and every AI call with its cost. */
+async function loadUsage() {
+  const box = document.getElementById("usage");
+  if (!box) return;
+  const r = await api("/usage");
+  const card = (label, t) => `<div class="panel" style="flex:1 1 180px">
+    <div class="muted small">${label}</div>
+    <div style="font-size:var(--sl-font-size-2x-large);font-weight:600">${usd(t.cost)}</div>
+    <div class="muted small">${t.calls} call${t.calls === 1 ? "" : "s"} · ${tokens(t.input)} in · ${tokens(t.output)} out${t.unpriced ? ` · ${t.unpriced} unpriced` : ""}</div>
+  </div>`;
+  box.innerHTML = `
+    <div class="row" style="align-items:stretch">${card("This month", r.thisMonth)}${card("Last 7 days", r.last7)}${card("All time", r.allTime)}</div>
+    <p class="field-hint" style="margin:0">OpenRouter reports each call's cost, so those are exact. Anthropic reports tokens only, so its costs are
+      estimated from list prices; your Anthropic Console billing page is the exact record.</p>
+    ${
+      r.byProvider.length
+        ? `<div class="panel"><h2>This month by model</h2>${r.byProvider
+            .map(
+              (p) => `<div class="row" style="padding:4px 0"><span style="flex:1">${esc(p.provider === "openrouter" ? "OpenRouter" : "Anthropic")} · <code>${esc(p.model || "?")}</code></span>
+              <span class="muted small">${p.calls} calls</span><b style="min-width:80px;text-align:right">${usd(p.cost)}</b></div>`,
+            )
+            .join("")}
+            <div class="row muted small" style="margin-top:8px">${r.byTask.map((t) => `${TASKS[t.task] || t.task}: ${usd(t.cost)} (${t.calls})`).join(" · ")}</div></div>`
+        : ""
+    }
+    <div class="panel">
+      <h2>History</h2>
+      ${
+        r.recent.length
+          ? `<div class="tablebox" style="border:0"><table class="meetings" style="min-width:760px"><thead><tr>
+              <th>When</th><th>Meeting</th><th>Task</th><th>Model</th><th>Tokens in / out</th><th style="text-align:right">Cost</th></tr></thead><tbody>
+              ${r.recent
+                .map(
+                  (u) => `<tr>
+                    <td style="white-space:nowrap">${when(u.at)}</td>
+                    <td>${u.meeting_id ? `<a href="#/m/${esc(u.meeting_id)}">${esc(u.title || "deleted meeting")}</a>` : `<span class="muted">—</span>`}</td>
+                    <td>${esc(TASKS[u.task] || u.task)}${u.ok ? "" : ` ${tag("failed", "danger")}`}</td>
+                    <td><code class="small">${esc(u.model || "?")}</code></td>
+                    <td>${tokens(u.input_tokens + u.cache_read + u.cache_write)} / ${tokens(u.output_tokens)}</td>
+                    <td style="text-align:right">${usd(u.cost_usd)}${u.cost_usd != null && !u.cost_exact ? ` <span class="muted small">est.</span>` : ""}</td>
+                  </tr>`,
+                )
+                .join("")}</tbody></table></div>`
+          : `<p class="muted" style="margin:0">No AI calls yet. Each summary, question and key test will appear here with its cost.</p>`
+      }
+    </div>`;
 }
 
 let connectionsLoaded = false;

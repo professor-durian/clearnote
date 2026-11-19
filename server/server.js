@@ -24,6 +24,7 @@ import * as google from "./google.js";
 import { analyzeMeeting, askMeeting, aiConfigured, providerOrder, testProvider } from "./ai.js";
 import * as config from "./config.js";
 import { listDirs, makeDir } from "./folders.js";
+import { usageReport, meetingUsage } from "./usage.js";
 import { toText, filenameFor } from "./export.js";
 import { registerAudioRoutes, processAudio, audioFields, resumePending, deleteAudio, onAudioDone } from "./audio.js";
 import { saveMeeting, scheduleSave, exportStatus, fillName, PART_KEYS } from "./save.js";
@@ -225,6 +226,9 @@ app.post(
     res.json({ notes: fillName(b.notesDocName ?? config.get("notesDocName"), m), audio: parts, from: latest ? m.title : "a sample meeting" });
   }),
 );
+
+// Spending log for the Settings › Usage tab.
+app.get("/api/usage", ownOrigin, (_req, res) => res.json(usageReport()));
 
 app.get("/api/extension-settings", ownOrigin, (_req, res) => res.json(config.extensionView()));
 
@@ -493,7 +497,7 @@ app.get(
   wrap((req, res) => {
     const m = getMeeting(req.params.id);
     if (!m) return res.status(404).json({ error: "unknown meeting" });
-    res.json({ ...m, ...audioFields(m.id), saved: exportStatus(m.id) });
+    res.json({ ...m, ...audioFields(m.id), saved: exportStatus(m.id), aiUsage: meetingUsage(m.id) });
   }),
 );
 

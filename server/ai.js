@@ -6,6 +6,7 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 
 import * as config from "./config.js";
+import { recordUsage } from "./usage.js";
 
 // Two providers: Anthropic directly, or OpenRouter. Keys are pasted in the
 // dashboard's Settings (or set in the environment). One is primary; if it
@@ -48,15 +49,24 @@ export function aiConfigured() {
   return providerOrder().length > 0;
 }
 
-async function withFallback(task, fns) {
+const modelFor = (provider) => config.get(provider === "openrouter" ? "openrouterModel" : "anthropicModel");
+
+/**
+ * Try each provider in order. Every attempt, successful or not, goes in the
+ * spending log. Each provider function returns { ..., usage, model? }.
+ */
+async function withFallback(task, fns, meetingId = null) {
   const order = providerOrder();
   if (!order.length) throw new Error("no AI provider configured: add a key in Settings");
   let lastErr;
   for (const name of order) {
     try {
-      return await fns[name]();
+      const r = await fns[name]();
+      recordUsage({ task, provider: name, model: r.model || modelFor(name), meetingId, usage: r.usage || {} });
+      return r;
     } catch (err) {
       lastErr = err;
+      recordUsage({ task, provider: name, model: modelFor(name), meetingId, usage: err.usage || {}, error: err.message });
       if (order.length > 1) console.warn(`[clearnote] ${task} via ${name} failed: ${err.message}`);
     }
   }
@@ -71,29 +81,42 @@ async function openRouter(body) {
       "content-type": "application/json",
       "x-title": "ClearNote",
     },
-    body: JSON.stringify({ model: config.get("openrouterModel"), ...body }),
+    // usage.include asks OpenRouter to report what the call cost.
+    body: JSON.stringify({ model: config.get("openrouterModel"), usage: { include: true }, ...body }),
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(`OpenRouter ${res.status}: ${json?.error?.message || res.statusText}`);
   const choice = json.choices?.[0];
   if (!choice) throw new Error("OpenRouter returned no answer");
-  return { text: String(choice.message?.content || "").trim(), usage: json.usage };
+  return { text: String(choice.message?.content || "").trim(), usage: json.usage, model: json.model };
 }
 
 /** Send a one-line test request to a provider; used by the Settings page. */
 export async function testProvider(name) {
   if (name === "openrouter") {
     if (!hasOpenRouter()) throw new Error("no OpenRouter key set");
-    await openRouter({ max_tokens: 16, messages: [{ role: "user", content: "Reply with OK." }] });
+    try {
+      const r = await openRouter({ max_tokens: 16, messages: [{ role: "user", content: "Reply with OK." }] });
+      recordUsage({ task: "test", provider: "openrouter", model: r.model || modelFor("openrouter"), usage: r.usage || {} });
+    } catch (err) {
+      recordUsage({ task: "test", provider: "openrouter", model: modelFor("openrouter"), error: err.message });
+      throw err;
+    }
     return { ok: true, model: config.get("openrouterModel") };
   }
   if (!hasAnthropic()) throw new Error("no Anthropic key set");
-  await client().messages.create({
-    model: config.get("anthropicModel"),
-    max_tokens: 64,
-    output_config: { effort: "low" },
-    messages: [{ role: "user", content: "Reply with OK." }],
-  });
+  try {
+    const r = await client().messages.create({
+      model: config.get("anthropicModel"),
+      max_tokens: 64,
+      output_config: { effort: "low" },
+      messages: [{ role: "user", content: "Reply with OK." }],
+    });
+    recordUsage({ task: "test", provider: "anthropic", model: r.model || modelFor("anthropic"), usage: r.usage });
+  } catch (err) {
+    recordUsage({ task: "test", provider: "anthropic", model: modelFor("anthropic"), error: err.message });
+    throw err;
+  }
   return { ok: true, model: config.get("anthropicModel") };
 }
 
@@ -220,16 +243,15 @@ export async function analyzeMeeting(meeting, segments, template, context = {}) 
         output_config: { effort: "high", format: zodOutputFormat(Analysis) },
         messages: [{ role: "user", content: userText }],
       });
+      const fail = (msg) => Object.assign(new Error(msg), { usage: response.usage });
       if (response.stop_reason === "refusal") {
-        throw new Error(
-          `the model declined to summarize this meeting (${response.stop_details?.category ?? "unknown"})`,
-        );
+        throw fail(`the model declined to summarize this meeting (${response.stop_details?.category ?? "unknown"})`);
       }
-      if (!response.parsed_output) throw new Error("the model returned a summary that did not match the schema");
-      return { parsed: response.parsed_output, usage: response.usage };
+      if (!response.parsed_output) throw fail("the model returned a summary that did not match the schema");
+      return { parsed: response.parsed_output, usage: response.usage, model: response.model };
     },
     openrouter: async () => {
-      const { text, usage } = await openRouter({
+      const { text, usage, model } = await openRouter({
         max_tokens: 16000,
         messages: [
           { role: "system", content: system },
@@ -241,9 +263,9 @@ export async function analyzeMeeting(meeting, segments, template, context = {}) 
         },
       });
       const json = JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, ""));
-      return { parsed: Analysis.parse(json), usage };
+      return { parsed: Analysis.parse(json), usage, model };
     },
-  });
+  }, meeting.id);
 
   return {
     summary: parsed.summary,
@@ -264,7 +286,7 @@ export async function askMeeting(meeting, segments, question, history = [], cont
   return withFallback("question", {
     anthropic: () => askAnthropic(transcript, question, history),
     openrouter: async () => {
-      const { text, usage } = await openRouter({
+      const { text, usage, model } = await openRouter({
         max_tokens: 4000,
         messages: [
           { role: "system", content: `${ASK_SYSTEM}\n\n${transcript}` },
@@ -272,9 +294,9 @@ export async function askMeeting(meeting, segments, question, history = [], cont
           { role: "user", content: question },
         ],
       });
-      return { text, usage };
+      return { text, usage, model };
     },
-  });
+  }, meeting.id);
 }
 
 const ASK_SYSTEM = `You answer questions about one meeting, using only its transcript.
@@ -298,12 +320,12 @@ async function askAnthropic(transcript, question, history) {
   });
 
   if (response.stop_reason === "refusal") {
-    return { text: "I can't answer that one.", usage: response.usage };
+    return { text: "I can't answer that one.", usage: response.usage, model: response.model };
   }
   const text = response.content
     .filter((b) => b.type === "text")
     .map((b) => b.text)
     .join("\n")
     .trim();
-  return { text, usage: response.usage };
+  return { text, usage: response.usage, model: response.model };
 }
