@@ -150,6 +150,7 @@ function addColumn(table, column, definition) {
   }
 }
 addColumn("meetings", "calendar_event_id", "TEXT");
+addColumn("calendar_events", "recurring_event_id", "TEXT"); // the series a repeating event belongs to
 addColumn("meetings", "match_confidence", "TEXT");
 addColumn("meetings", "matched_by", "TEXT");
 // Set when the title came from the platform rather than from a person, so a

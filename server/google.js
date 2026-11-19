@@ -174,14 +174,14 @@ async function api(path, params) {
 const upsertEvent = db.prepare(
   `INSERT INTO calendar_events
      (id, calendar_id, title, description, location, start_at, end_at, organizer,
-      conference_codes, html_link, status, synced_at)
+      conference_codes, html_link, status, synced_at, recurring_event_id)
    VALUES (@id, @calendar_id, @title, @description, @location, @start_at, @end_at,
-           @organizer, @conference_codes, @html_link, @status, @synced_at)
+           @organizer, @conference_codes, @html_link, @status, @synced_at, @recurring_event_id)
    ON CONFLICT(id) DO UPDATE SET
      title = excluded.title, description = excluded.description, location = excluded.location,
      start_at = excluded.start_at, end_at = excluded.end_at, organizer = excluded.organizer,
      conference_codes = excluded.conference_codes, html_link = excluded.html_link,
-     status = excluded.status, synced_at = excluded.synced_at`,
+     status = excluded.status, synced_at = excluded.synced_at, recurring_event_id = excluded.recurring_event_id`,
 );
 const clearAttendees = db.prepare(`DELETE FROM event_attendees WHERE event_id = ?`);
 const insertAttendee = db.prepare(
@@ -207,6 +207,7 @@ const storeEvents = db.transaction((events, calendarId) => {
       html_link: ev.htmlLink || null,
       status: ev.status || "confirmed",
       synced_at: Date.now(),
+      recurring_event_id: ev.recurringEventId || null,
     });
 
     clearAttendees.run(ev.id);

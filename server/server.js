@@ -32,7 +32,7 @@ import { registerAudioRoutes, processAudio, audioFields, resumePending, deleteAu
 import { saveMeeting, scheduleSave, exportStatus, fillName, PART_KEYS } from "./save.js";
 import { syncNow, syncState, startSyncLoop, markDeleted, onMeetingReceived, onMeetingRemoved } from "./sync.js";
 import { versionInfo, checkForUpdate, updateState, applyUpdate, startUpdateChecks } from "./update.js";
-import { deliver, sendTest, webhookStatus, webhookRound, startWebhookLoop, resetDeliveries } from "./webhook.js";
+import { deliver, sendTest, webhookStatus, webhookRound, startWebhookLoop, resetDeliveries, captureDeleted, linkedRecord } from "./webhook.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -208,6 +208,12 @@ app.patch(
     const before = config.get("calendarIds");
     const body = { ...(req.body || {}) };
     // A new address starts from now: past meetings go only when asked.
+    // Captures are only ever sent signed: an address needs a secret.
+    const url = "webhookUrl" in body ? body.webhookUrl : config.get("webhookUrl");
+    const secretSet = "webhookSecret" in body ? !!body.webhookSecret : !!config.get("webhookSecret");
+    if (url && !secretSet) {
+      return res.status(400).json({ error: "Add a signing secret for the address (Generate makes one), then save." });
+    }
     if ("webhookUrl" in body && body.webhookUrl !== config.get("webhookUrl")) {
       body.webhookSince = Date.now();
       resetDeliveries();
@@ -637,7 +643,7 @@ app.get(
   wrap((req, res) => {
     const m = getMeeting(req.params.id);
     if (!m) return res.status(404).json({ error: "unknown meeting" });
-    res.json({ ...m, ...audioFields(m.id), saved: exportStatus(m.id), aiUsage: meetingUsage(m.id) });
+    res.json({ ...m, ...audioFields(m.id), saved: exportStatus(m.id), aiUsage: meetingUsage(m.id), linked: linkedRecord(m.id) });
   }),
 );
 
@@ -660,6 +666,7 @@ app.delete(
     const info = db.prepare(`DELETE FROM meetings WHERE id = ?`).run(req.params.id);
     if (info.changes) deleteAudio(req.params.id);
     if (info.changes && synced?.sync_file_id) markDeleted(req.params.id, synced.sync_file_id);
+    if (info.changes) captureDeleted(req.params.id);
     res.json({ deleted: info.changes });
   }),
 );
@@ -828,7 +835,10 @@ onMeetingReceived((id) => {
     /* the People list catches up on the next backfill */
   }
 });
-onMeetingRemoved((id) => deleteAudio(id));
+onMeetingRemoved((id) => {
+  deleteAudio(id);
+  captureDeleted(id);
+});
 if (!process.env.NODE_TEST_CONTEXT && !process.env.CLEARNOTE_NO_BACKGROUND) {
   startSyncLoop(2 * 60 * 1000);
   startWebhookLoop();

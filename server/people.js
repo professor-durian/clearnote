@@ -47,7 +47,7 @@ const addAlias = db.prepare(`INSERT OR IGNORE INTO person_aliases (alias, person
 const insertPerson = db.prepare(`INSERT INTO people (name, email, created_at) VALUES (?, ?, ?)`);
 
 /** You, so you don't appear in your own People list. */
-function isSelf(name, email) {
+export function isSelf(name, email) {
   const n = norm(name);
   if (n === "you" || n === "me") return true;
   const mine = norm(config.get("displayName"));

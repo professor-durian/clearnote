@@ -346,6 +346,7 @@ async function renderMeeting(id, tabName = "notes") {
         ${hasAudio ? `<sl-button data-act="retranscribe"><sl-icon slot="prefix" name="soundwave"></sl-icon>Re-transcribe</sl-button>` : ""}
         <sl-button data-act="summary"><sl-icon slot="prefix" name="stars"></sl-icon>${hasSummary ? "Regenerate summary" : "Write summary"}</sl-button>
         <sl-button data-act="save"><sl-icon slot="prefix" name="cloud-upload"></sl-icon>Save to Drive again</sl-button>
+        ${m.linked ? `<sl-button href="${esc(m.linked.url)}" target="_blank" rel="noreferrer"><sl-icon slot="prefix" name="box-arrow-up-right"></sl-icon>Open in ${esc(m.linked.name || new URL(m.linked.url).hostname)}</sl-button>` : ""}
         <sl-dropdown placement="bottom-end" hoist id="more">
           <sl-icon-button slot="trigger" name="three-dots" label="More actions"></sl-icon-button>
           <sl-menu>
@@ -713,7 +714,7 @@ async function showHook() {
   if (!box) return;
   const st = await api("/webhook").catch(() => null);
   if (!st) return;
-  box.innerHTML = !st.enabled ? tag("Off", "neutral") : st.failing ? tag(`${st.failing} failing`, "danger") : tag("On", "success");
+  box.innerHTML = st.address && !st.enabled ? tag("Needs a secret", "warning") : !st.enabled ? tag("Off", "neutral") : st.failing ? tag(`${st.failing} failing`, "danger") : tag("On", "success");
   const res = document.getElementById("hookresult");
   if (res && !res.innerHTML && st.enabled)
     res.textContent = st.lastError && st.failing
@@ -1062,12 +1063,20 @@ async function renderSettings(tabName = "general") {
           ${status.connected ? `<div class="panel" id="upcoming"></div>` : ""}
           <div class="panel stack">
             <div class="row"><h2 style="margin:0">Send finished captures to another app</h2><span id="hookstate"></span></div>
-            <p class="muted" style="margin:0">When a capture is finished, ClearNote sends it (title, source, people, summary, next steps and the full transcript) as JSON to this
+            <p class="muted" style="margin:0">When a capture is finished, ClearNote sends it (kind, source, people, summary, next steps, calendar event and the full transcript) as JSON to this
               address: your own notes system, an automation tool such as Zapier or n8n, or a script. Changes later on, such as a regenerated summary,
               are sent again. Only the computer that recorded a capture sends it.</p>
             ${input("webhookUrl", "Address", "https://example.com/clearnote", "Must accept a POST with a JSON body. Leave empty to turn this off.")}
-            ${secret("webhookSecret", "Signing secret (optional)", "A long random string the receiver also knows")}
-            <p class="field-hint" style="margin:0">With a secret, each request carries <code>X-ClearNote-Signature: sha256=…</code>, an HMAC-SHA256 of the body, so the receiver can check it came from you.</p>
+            ${secret("webhookSecret", "Signing secret (required)", "A long random string the receiver also knows")}
+            <div class="row"><sl-button id="hookgen" size="small"><sl-icon slot="prefix" name="key"></sl-icon>Generate a secret</sl-button>
+              <span class="field-hint" id="hookgenhint">Give the receiver the same secret. ClearNote never sends unsigned.</span></div>
+            <p class="field-hint" style="margin:0">Each request carries <code>X-ClearNote-Timestamp</code> and <code>X-ClearNote-Signature: sha256=…</code>,
+              an HMAC-SHA256 of <code>timestamp.body</code>, so the receiver can check it came from you and turn away old or replayed requests.</p>
+            <div class="row" style="gap:16px"><span>Send:</span>
+              ${["call:Calls", "youtube:YouTube", "web:Websites"].map((x) => {
+                const [k, label] = x.split(":");
+                return `<sl-checkbox data-kind="${k}" ${String(v.webhookKinds || "call").split(",").includes(k) ? "checked" : ""}>${label}</sl-checkbox>`;
+              }).join("")}</div>
             <div class="row"><sl-button id="hooktest">Send a test</sl-button><sl-button id="hookpast">Also send past captures</sl-button><span id="hookresult" class="small"></span></div>
           </div>
           <div class="panel stack">
@@ -1116,6 +1125,8 @@ async function renderSettings(tabName = "general") {
     const patch = {};
     for (const el of view.querySelectorAll("[data-key]:not([disabled])")) patch[el.dataset.key] = read(el);
     for (const el of view.querySelectorAll("[data-secret]:not([disabled])")) if (el.value.trim()) patch[el.dataset.secret] = el.value.trim();
+    const kinds = [...view.querySelectorAll("[data-kind]")];
+    if (kinds.length) patch.webhookKinds = kinds.filter((c) => c.checked).map((c) => c.dataset.kind).join(",");
     const cals = [...view.querySelectorAll("[data-cal]")];
     if (cals.length) {
       const picked = cals.filter((c) => c.checked).map((c) => c.dataset.cal);
@@ -1154,6 +1165,14 @@ async function renderSettings(tabName = "general") {
   wireTxSetup();
   loadModelPickers();
   showHook();
+  document.getElementById("hookgen").onclick = () => {
+    const box = view.querySelector('[data-secret="webhookSecret"]');
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    box.type = "text";
+    box.value = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+    box.focus();
+    document.getElementById("hookgenhint").textContent = "Copy it into the receiver now, then Save. It isn't shown again after saving.";
+  };
   document.getElementById("hooktest").onclick = async (e) => {
     e.target.loading = true;
     await save();

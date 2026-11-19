@@ -308,49 +308,75 @@ tools/make-icons.mjs       draws the icon and writes every size
 ## Send finished captures to another app
 
 Settings › Connections › *Send finished captures to another app* takes a web
-address. When a meeting is finished (ended, summarised, audio transcribed),
-ClearNote POSTs it there as JSON. If it changes later (a regenerated summary, a
-corrected line, an edited title) it is sent again. Failed deliveries are retried
-after 1, 2, 4 … minutes, up to every 6 hours. Only the computer that recorded a
-meeting sends it, so synced computers don't deliver it twice. A new address
-starts from now; *Also send past captures* sends the rest.
+address and a signing secret (required; *Generate a secret* makes one), and
+which captures to send: calls, YouTube, websites (calls only by default).
 
-Headers:
+When a capture is finished (ended, summarised, audio transcribed), ClearNote
+POSTs it there as JSON. Changes later (a regenerated summary, a corrected line,
+an edited title) are sent again with a higher `revision`; deleting a capture
+sends `meeting.deleted`. Failed deliveries are retried after 1, 2, 4 … minutes,
+up to every 6 hours. Only the computer that recorded a capture sends it (and
+its deletion), so synced computers never deliver it twice. A new address starts
+from now; *Also send past captures* sends the rest.
 
-- `X-ClearNote-Event`: `meeting.finished`, `meeting.updated` or `test`
+### Headers
+
+- `X-ClearNote-Event`: `meeting.finished`, `meeting.updated`, `meeting.deleted` or `test`
 - `X-ClearNote-Delivery`: a unique id per request
-- `X-ClearNote-Signature: sha256=<hex>`: with a signing secret set, the
-  HMAC-SHA256 of the raw body keyed by the secret
+- `X-ClearNote-Timestamp`: Unix seconds when the request was signed
+- `X-ClearNote-Signature: sha256=<hex>`: HMAC-SHA256 of `<timestamp>.<raw body>`,
+  keyed by the secret. Compare in constant time and reject timestamps more than
+  5 minutes old. Retries are signed afresh.
 
-Body:
+### Body (version 2)
 
 ```json
 {
   "event": "meeting.finished",
-  "version": 1,
+  "version": 2,
   "deliveryId": "…",
   "sentAt": "2026-11-19T08:00:00.000Z",
   "meeting": {
     "id": "…",
-    "title": "Budget review",
+    "revision": 1,
+    "kind": "call | youtube | web",
     "platform": "Google Meet",
+    "platformKey": "google_meet | zoom | teams | youtube | web",
+    "title": "Budget review",
     "url": "https://meet.google.com/…",
     "startedAt": "…", "endedAt": "…",
     "recordedOn": "Scott’s MacBook Air",
     "transcriptSource": "captions | audio+captions",
     "summary": { "headline": "…", "tldr": "…", "keyPoints": [], "decisions": [], "openQuestions": [] },
     "actionItems": [{ "text": "…", "owner": "…", "due": "…", "priority": "…", "done": false }],
-    "people": [{ "name": "…", "email": "…", "spoke": true }],
-    "calendarEvent": { "id": "…", "title": "…", "link": "…", "organizer": "…" },
+    "people": [{ "name": "…", "email": "…", "spoke": true, "self": false, "organizer": false }],
+    "calendarEvent": {
+      "id": "…", "seriesId": "… (recurring events)", "calendarId": "…", "account": "you@example.com",
+      "title": "…", "scheduledStart": "…", "scheduledEnd": "…", "organizer": "…", "link": "…"
+    },
     "tags": [], "notes": null,
     "transcript": [{ "speaker": "…", "text": "…", "startMs": 0, "endMs": 1500 }],
-    "links": { "dashboard": "http://localhost:8787/#/m/…", "notesDoc": "…", "audio": { "mixed": "…" } }
+    "files": {
+      "notesDoc": { "id": "<Drive file id>", "url": "…" },
+      "audio": { "mixed": { "id": "…", "url": "…" }, "call": { "id": "…", "url": "…" }, "mic": { "id": "…", "url": "…" } }
+    }
   }
 }
 ```
 
-Answer with any 2xx status to accept it. Use `meeting.id` as the key: an
-update replaces what you stored for that id.
+`startedAt` is when you joined; `calendarEvent.scheduledStart` is the
+calendar's time. `meeting.deleted` carries only `{ "id", "revision" }`.
+
+### Answering
+
+- Any 2xx accepts. Use `meeting.id` as the key and keep the highest `revision`:
+  a late request with a lower revision is older and can be ignored.
+- Optionally answer `{ "recordId": "…", "url": "https://…", "appName": "kayb" }`:
+  the capture's page in ClearNote then shows *Open in kayb*.
+- `410 Gone` means "stop sending this capture"; ClearNote won't send it again
+  unless you use *Send to app again*.
+- Anything else is retried. `test` deliveries carry a sample capture with
+  `revision: 0`; accept them without storing.
 
 ## The icon
 

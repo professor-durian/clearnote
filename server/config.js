@@ -26,7 +26,8 @@ export const FIELDS = {
   // Send finished meetings to another app (a web address that accepts JSON)
   webhookUrl: { default: "" },
   webhookSecret: { secret: true, default: "" },
-  webhookSince: { default: 0 }, // meetings finished before this aren't sent unless asked
+  webhookSince: { default: 0 },
+  webhookKinds: { default: "call" }, // which captures go: any of call, youtube, web // meetings finished before this aren't sent unless asked
   syncDrive: { default: true }, // share finished meetings with your other computers through Google Drive
   deviceName: { default: "" }, // shown on meetings recorded here, on your other computers
   deviceId: { default: "" },
