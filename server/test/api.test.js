@@ -22,6 +22,10 @@ async function boot() {
       ...process.env,
       PORT: String(PORT),
       CLEARNOTE_DB: dbFile,
+      // Keep the test server away from the real settings file and audio folder.
+      CLEARNOTE_SETTINGS: `${dbFile}.settings.json`,
+      CLEARNOTE_AUDIO_DIR: `${dbFile}.audio`,
+      OPENROUTER_API_KEY: "",
       CLEARNOTE_TOKEN: "test-token",
       // No API key: the server must still capture, and mark the summary missing.
       ANTHROPIC_API_KEY: "",
@@ -156,7 +160,7 @@ test("ending a session records the duration and notes the missing summary", asyn
   const m = await (await fetch(`${base}/api/meetings/${meetingId}`)).json();
   assert.equal(m.ended_at, endedAt);
   assert.equal(m.status, "captured", "a missing API key is not a failed capture");
-  assert.match(m.summary.notice, /ANTHROPIC_API_KEY/);
+  assert.match(m.summary.notice, /add an AI key in Settings|no AI provider set/);
   assert.ok(!m.summary.error, "nothing actually failed");
   assert.equal(m.segments.length, 4, "the transcript is saved in full regardless");
 });
@@ -264,7 +268,7 @@ test("asking about a meeting fails cleanly with no API key", async () => {
     body: JSON.stringify({ question: "What did we decide?" }),
   });
   assert.equal(res.status, 400);
-  assert.match((await res.json()).error, /ANTHROPIC_API_KEY/);
+  assert.match((await res.json()).error, /add an AI key in Settings|no AI provider set/);
 });
 
 test("a meeting with no captions is flagged rather than summarized", async () => {
@@ -343,7 +347,7 @@ test("the export notes a missing summary instead of leaving empty headings", asy
   const text = await (await fetch(`${base}/api/meetings/${m.id}/export.txt`)).text();
 
   assert.ok(!/^KEY POINTS$/m.test(text), "no heading without content under it");
-  assert.match(text, /ANTHROPIC_API_KEY/, "it says why there is no summary");
+  assert.match(text, /add an AI key in Settings|no AI provider set/, "it says why there is no summary");
 });
 
 test("exporting an unknown meeting is a 404", async () => {

@@ -25,6 +25,10 @@ async function boot() {
       ...process.env,
       PORT: String(PORT),
       CLEARNOTE_DB: dbFile,
+      // Keep the test server away from the real settings file and audio folder.
+      CLEARNOTE_SETTINGS: `${dbFile}.settings.json`,
+      CLEARNOTE_AUDIO_DIR: `${dbFile}.audio`,
+      OPENROUTER_API_KEY: "",
       CLEARNOTE_TOKEN: "",
       ANTHROPIC_API_KEY: "",
       ANTHROPIC_AUTH_TOKEN: "",
@@ -127,7 +131,7 @@ test("health reports the calendar as unconfigured", async () => {
 test("connecting without credentials fails with an explanation", async () => {
   const res = await fetch(`${base}/api/google/connect`, { redirect: "manual" });
   assert.equal(res.status, 400);
-  assert.match(await res.text(), /GOOGLE_CLIENT_ID/);
+  assert.match(await res.text(), /client ID and secret in Settings/);
 });
 
 test("the OAuth callback rejects an unknown state", async () => {

@@ -1,13 +1,15 @@
 {
   "manifest_version": 3,
-  "name": "ClearNote \u2014 botless meeting notes",
+  "name": "ClearNote — botless meeting notes",
   "version": "0.1.0",
   "description": "Captures Google Meet, Zoom and Teams transcripts from the platform's own captions. No bot joins your call.",
   "permissions": [
     "storage",
     "tabs",
     "alarms",
-    "scripting"
+    "scripting",
+    "tabCapture",
+    "offscreen"
   ],
   "host_permissions": [
     "http://localhost:8787/*",
@@ -78,5 +80,14 @@
         "https://*.cloud.microsoft.com/*"
       ]
     }
-  ]
+  ],
+  "commands": {
+    "toggle-audio": {
+      "suggested_key": {
+        "default": "Alt+Shift+R",
+        "mac": "Alt+Shift+R"
+      },
+      "description": "Start or stop recording the meeting's audio"
+    }
+  }
 }

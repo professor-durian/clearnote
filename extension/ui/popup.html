@@ -30,6 +30,11 @@
       button:hover, a.btn:hover { background: #222c38; }
       a.btn.primary { background: #2f7cf6; border-color: #2f7cf6; color: #fff; }
       p.hint { color: #7a8492; font-size: 11.5px; margin: 10px 0 0; }
+      .audio { margin-top: 12px; }
+      .audio p.hint { margin-top: 6px; }
+      button.rec { width: 100%; background: #f0734a; border-color: #f0734a; color: #fff; }
+      button.rec:hover { background: #f4865f; }
+      button.rec.on { background: #1a222c; border-color: #f0734a; color: #f0734a; }
     </style>
   </head>
   <body>
@@ -37,12 +42,16 @@
     <div class="row"><span class="k">Server</span><span class="v" id="server">…</span></div>
     <div class="row"><span class="k">Queued</span><span class="v" id="pending">…</span></div>
     <div class="row"><span class="k">Auto-capture</span><span class="v" id="auto">…</span></div>
+    <div class="audio" id="audio">
+      <button id="rec" class="rec" hidden>Record audio</button>
+      <p class="hint" id="recHint"></p>
+    </div>
     <div class="actions">
       <a class="btn primary" id="dash" href="#" target="_blank" rel="noreferrer">Dashboard</a>
       <button id="retry">Retry sync</button>
     </div>
     <div class="actions">
-      <button id="opts">Settings</button>
+      <a class="btn" id="settingsLink" href="#" target="_blank" rel="noreferrer">Settings</a>
     </div>
     <p class="hint">No bot joins your calls. ClearNote reads the captions the meeting platform already generates.</p>
     <script src="popup.js"></script>
