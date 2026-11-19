@@ -37,7 +37,7 @@ export async function checkForUpdate() {
     await git("fetch", "--quiet", "origin", branch);
     const behind = Number(await git("rev-list", "--count", `HEAD..origin/${branch}`)) || 0;
     const log = behind ? await git("log", "--format=%s", "--no-merges", `HEAD..origin/${branch}`) : "";
-    const dirty = !!(await git("status", "--porcelain", "--untracked-files=no"));
+    const dirty = !!(await localChanges());
     Object.assign(state, { checkedAt: Date.now(), behind, changes: log ? log.split("\n").slice(0, 20) : [], error: null, dirty });
   } catch (err) {
     Object.assign(state, { checkedAt: Date.now(), error: String(err.stderr || err.message || err).trim().split("\n").pop() });
@@ -47,18 +47,31 @@ export async function checkForUpdate() {
 
 export const updateState = () => ({ ...state });
 
+// npm rewrites the package lock on some Node versions; that isn't a change of
+// the user's, so it neither blocks an update nor survives one.
+const LOCK = "server/package-lock.json";
+async function localChanges() {
+  const out = await git("status", "--porcelain", "--untracked-files=no");
+  return out
+    .split("\n")
+    .filter((l) => l.trim() && !l.endsWith(LOCK))
+    .join("\n");
+}
+
 /** Pull, install any new dependencies, then exit so launchd restarts us. */
 export async function applyUpdate() {
   if (state.applying) return { ok: false, error: "An update is already running." };
   state.applying = true;
   try {
+    await git("checkout", "--", LOCK).catch(() => {});
     const before = await git("rev-parse", "HEAD");
     const branch = await git("rev-parse", "--abbrev-ref", "HEAD");
     await git("pull", "--ff-only", "--quiet", "origin", branch);
     const changed = await git("diff", "--name-only", before, "HEAD");
     if (/^server\/package(-lock)?\.json$/m.test(changed)) {
       const npm = path.join(path.dirname(process.execPath), "npm");
-      await run(npm, ["install", "--omit=dev", "--no-audit", "--no-fund"], { cwd: path.join(ROOT, "server"), timeout: 10 * 60_000 });
+      // ci installs exactly what the lock says and leaves it untouched.
+      await run(npm, ["ci", "--omit=dev", "--no-audit", "--no-fund"], { cwd: path.join(ROOT, "server"), timeout: 10 * 60_000 });
     }
     // A non-zero exit makes launchd start the server again (KeepAlive on failure).
     setTimeout(() => process.exit(75), 400);

@@ -35,6 +35,8 @@ MAJOR="$("$NODE" -p 'process.versions.node.split(".")[0]')"
 
 if [ -d "$DIR/.git" ]; then
   say "Updating $DIR"
+  # npm may have rewritten the package lock on an earlier run; that isn't yours.
+  git -C "$DIR" checkout -- server/package-lock.json 2>/dev/null || true
   git -C "$DIR" pull --ff-only
 else
   say "Downloading ClearNote to $DIR"
@@ -44,7 +46,9 @@ fi
 
 say "Installing the server's packages"
 cd "$DIR/server"
-PATH="$(dirname "$NODE"):$PATH" npm install --omit=dev --no-audit --no-fund
+# ci installs exactly what the lock file lists and leaves it unchanged, so
+# later one-click updates don't see a local change.
+PATH="$(dirname "$NODE"):$PATH" npm ci --omit=dev --no-audit --no-fund
 
 # launchd starts with no PATH: remember which Node to use.
 touch "$ENV_FILE"
