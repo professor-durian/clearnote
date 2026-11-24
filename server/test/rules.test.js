@@ -59,3 +59,25 @@ test("your own rules, in order, with domains", () => {
   config.update({ rules: "" });
   assert.equal(rules.getRules()[0].id, "host-meet");
 });
+
+test("a call you host that wasn't on the calendar at the start gets your host rule before notes are written", () => {
+  db.prepare(`INSERT OR REPLACE INTO google_account (id, email) VALUES (1, 'me@example.com')`).run();
+  db.prepare(
+    `INSERT INTO meetings (id, meeting_key, platform, platform_label, title, url, started_at, status, rule_json)
+     VALUES ('late-1', 'kkk-llll-mmm', 'google_meet', 'Google Meet', 'Late booking', 'https://meet.google.com/kkk-llll-mmm', ?, 'processing', ?)`,
+  ).run(now, JSON.stringify(rules.evaluate({ url: "https://meet.google.com/kkk-llll-mmm", platform: "google_meet", at: now })));
+  assert.equal(rules.meetingRule(db.prepare(`SELECT rule_json FROM meetings WHERE id = 'late-1'`).get()).host, "unknown");
+
+  // The calendar catches up after the call started; the call gets matched.
+  db.prepare(
+    `INSERT INTO calendar_events (id, calendar_id, title, start_at, end_at, organizer, conference_codes, synced_at)
+     VALUES ('ev-late', 'primary', 'Late booking', ?, ?, 'me@example.com', '["meet:kkk-llll-mmm"]', ?)`,
+  ).run(now - 60e3, now + 1800e3, now);
+  db.prepare(`UPDATE meetings SET calendar_event_id = 'ev-late' WHERE id = 'late-1'`).run();
+
+  const d = rules.recheck("late-1");
+  assert.equal(d.host, "me");
+  assert.equal(d.rule.id, "host-meet");
+  assert.equal(d.actions.summary, false);
+  assert.equal(d.actions.saveNotes, false);
+});

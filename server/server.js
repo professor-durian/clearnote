@@ -85,7 +85,7 @@ app.get("/api/health", (_req, res) =>
 app.post(
   "/api/sessions",
   requireToken,
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const { meetingKey, platform, platformLabel, title, url, startedAt, reuse } = req.body || {};
     if (!meetingKey || !platform || !startedAt) {
       return res.status(400).json({ error: "meetingKey, platform and startedAt are required" });
@@ -109,7 +109,7 @@ app.post(
       url,
       startedAt: Number(startedAt),
     });
-    const decision = rules.evaluate({ url, platform, meetingKey, at: Number(startedAt) });
+    const decision = await evaluateFresh({ url, platform, meetingKey, at: Number(startedAt) });
     db.prepare(`UPDATE meetings SET rule_json = ? WHERE id = ?`).run(JSON.stringify(decision), id);
     console.log(`[clearnote] capturing "${title}" (${platform}) -> ${id} [rule: ${decision.rule?.name || "none"}]`);
     res.json({ id });
@@ -326,7 +326,7 @@ app.post(
 app.post(
   "/api/rules/evaluate",
   ownOrigin,
-  wrap((req, res) => res.json(rules.evaluate(req.body || {}))),
+  wrap(async (req, res) => res.json(await evaluateFresh(req.body || {}))),
 );
 app.get("/api/rules", ownOrigin, (_req, res) =>
   res.json({ rules: rules.getRules(), defaults: rules.DEFAULT_RULES, sites: rules.SITES, hosts: rules.HOSTS }),
@@ -514,8 +514,27 @@ app.post(
 
 // Every path through a summary ends with the meeting saved wherever Settings
 // says (Drive notes, audio files), so the saved copy always matches.
+/**
+ * Decide the rule for a call. If the call isn't on the calendar ClearNote
+ * knows, refresh the calendar once (it may have been booked minutes ago) and
+ * decide again, so a call you host isn't treated as someone else's.
+ */
+let lastFreshSync = 0;
+async function evaluateFresh(args) {
+  const first = rules.evaluate(args);
+  if (first.host !== "unknown" || !google.connectionStatus().connected || Date.now() - lastFreshSync < 60_000) return first;
+  lastFreshSync = Date.now();
+  try {
+    await Promise.race([google.syncEvents(), new Promise((_, no) => setTimeout(() => no(new Error("timeout")), 5000))]);
+  } catch {
+    return first;
+  }
+  return rules.evaluate(args);
+}
+
 async function summarize(meetingId, template) {
   try {
+    rules.recheck(meetingId);
     await summarizeOnly(meetingId, template);
   } finally {
     try {

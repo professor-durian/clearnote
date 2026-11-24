@@ -121,7 +121,8 @@ function hostOf(url) {
 /** Your email addresses: the connected Google account, plus any you added. */
 function myEmails() {
   const acct = db.prepare(`SELECT email FROM google_account WHERE id = 1`).get()?.email;
-  return new Set([acct].filter(Boolean).map((e) => e.toLowerCase()));
+  const others = String(config.get("otherEmails") || "").split(/[\s,;]+/);
+  return new Set([acct, ...others].filter(Boolean).map((e) => e.toLowerCase()));
 }
 
 /**
@@ -178,6 +179,34 @@ export function evaluate({ url = "", platform = "", meetingKey = "", at = Date.n
 }
 
 /** The rule decision stored with a meeting, if any. */
+/**
+ * Decide again once the calendar is known. A call can start before ClearNote
+ * has its event (made minutes earlier, or the calendar not yet refreshed), so
+ * the first decision says "not on my calendar". When the call has since been
+ * matched to an event, use that event's organiser, so a call you host gets
+ * your "calls I host" rule (no notes or summary) before anything is written.
+ */
+export function recheck(meetingId) {
+  const m = db.prepare(`SELECT platform, url, rule_json, calendar_event_id FROM meetings WHERE id = ?`).get(meetingId);
+  const decision = meetingRule(m);
+  if (!m || !decision || decision.host !== "unknown" || !m.calendar_event_id) return decision;
+  const ev = db.prepare(`SELECT id, title, organizer FROM calendar_events WHERE id = ?`).get(m.calendar_event_id);
+  if (!ev) return decision;
+  const host = ev.organizer && myEmails().has(ev.organizer.toLowerCase()) ? "me" : "others";
+  const rule = getRules().find((r) => matches(r, decision.site, host, hostOf(m.url || "")));
+  const next = {
+    ...decision,
+    host,
+    event: { id: ev.id, title: ev.title },
+    rule: rule ? { id: rule.id, name: rule.name } : null,
+    actions: rule ? rule.actions : FALLBACK,
+    rechecked: true,
+  };
+  db.prepare(`UPDATE meetings SET rule_json = ? WHERE id = ?`).run(JSON.stringify(next), meetingId);
+  if (next.rule?.id !== decision.rule?.id) console.log(`[clearnote] ${meetingId}: now "${next.rule?.name}" (calendar matched after the call started)`);
+  return next;
+}
+
 export function meetingRule(meeting) {
   if (!meeting?.rule_json) return null;
   try {
