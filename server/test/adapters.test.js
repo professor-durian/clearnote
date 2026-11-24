@@ -122,6 +122,18 @@ test("the Zoom web client is recognised, and keyed by meeting number", () => {
   assert.equal(byId("zoom").meetingKey(), "zoom:98765432109");
 });
 
+test("Zoom company subdomains and the newer /wc/join/ address give the same meeting", () => {
+  for (const url of [
+    "https://greenlightcloud.zoom.us/j/82428478525?pwd=x",
+    "https://greenlightcloud.zoom.us/wc/82428478525/join?pwd=x",
+    "https://app.zoom.us/wc/join/82428478525",
+  ]) {
+    goTo(url);
+    assert.equal(byId("zoom").matches(), true, url);
+    assert.equal(byId("zoom").meetingKey(), "zoom:82428478525", url);
+  }
+});
+
 test("Teams is recognised on both its hosts", () => {
   for (const url of [
     "https://teams.microsoft.com/v2/?meetingId=19%3ameeting_abc",

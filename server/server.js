@@ -21,6 +21,7 @@ import {
 import { candidateEvents, getEvent, linkMeetingToEvent, upcomingEvents } from "./db.js";
 import { pickMatch, shouldAdoptTitle, reconcileParticipants } from "./matching.js";
 import * as google from "./google.js";
+import * as drive from "./drive.js";
 import { analyzeMeeting, askMeeting, aiConfigured, providerOrder, testProvider, listModels } from "./ai.js";
 import * as config from "./config.js";
 import { listDirs, makeDir } from "./folders.js";
@@ -840,6 +841,7 @@ onMeetingRemoved((id) => {
   captureDeleted(id);
 });
 if (!process.env.NODE_TEST_CONTEXT && !process.env.CLEARNOTE_NO_BACKGROUND) {
+  if (google.connectionStatus().drive) drive.tidyFolders().catch((err) => console.warn(`[clearnote] Drive folder tidy-up failed: ${err.message}`));
   startSyncLoop(2 * 60 * 1000);
   startWebhookLoop();
   startUpdateChecks();

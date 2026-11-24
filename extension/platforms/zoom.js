@@ -59,15 +59,28 @@
       return /(^|\.)zoom\.us$/.test(location.hostname) && /\/(wc|j)\//.test(location.pathname);
     },
 
-    async waitForJoin() {
-      return CN.waitFor(
-        () => CN.pick(LEAVE) || CN.pick(["#wc-container-right", "[class*='meeting-client']"]),
-        { timeout: 0x7fffffff, interval: 1000 },
+    // In the call: a Leave control (Zoom redraws its client often, so match
+    // by label as well as by class), or the meeting client's own containers.
+    inCall() {
+      return !!(
+        CN.pick(LEAVE) ||
+        CN.buttonByLabel(/^\s*leave(\s+meeting)?\s*$/i) ||
+        CN.pick(["#wc-container-right", "[class*='meeting-client']", "[class*='meeting-app']", "#webclient"])
       );
     },
 
+    async waitForJoin() {
+      return CN.waitFor(() => adapter.inCall(), { timeout: 0x7fffffff, interval: 1000 });
+    },
+
     hasLeft() {
-      return !CN.pick(LEAVE) && !document.querySelector("[class*='meeting-client']");
+      return !adapter.inCall();
+    },
+
+    // On the /j/ launch page Zoom usually opens its desktop app, which a
+    // browser extension can't read. Say so instead of "waiting" forever.
+    launchPage() {
+      return /\/j\//.test(location.pathname) && !adapter.inCall() && !!CN.buttonByLabel(/launch meeting|join from (your )?browser/i);
     },
 
     async enableCaptions() {
@@ -147,7 +160,7 @@
     },
 
     meetingKey() {
-      const id = location.pathname.match(/\/(?:wc|j)\/(\d+)/)?.[1] || location.pathname;
+      const id = location.pathname.match(/\/(?:wc|j|s)\/(?:join\/)?(\d{9,12})/)?.[1] || location.pathname;
       return `zoom:${id}`;
     },
   };

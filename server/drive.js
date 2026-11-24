@@ -55,21 +55,92 @@ async function alive(id) {
   }
 }
 
-/**
- * The folder ClearNote saves into, created in My Drive on first use. You can
- * rename or move it in Drive; ClearNote keeps using it by its ID. If it is
- * deleted, a new one is made.
+/*
+ * One ClearNote folder in My Drive: notes Docs at the top, audio in an
+ * "Audio" subfolder, sync data in a "Sync" subfolder. Each folder carries a
+ * hidden role tag, so every computer on the account finds the same ones. You
+ * can rename or move them in Drive; ClearNote keeps using them by ID and tag.
+ * Folders made by older versions (three side by side) are moved in and
+ * renamed the first time they're used.
  */
-export async function ensureFolder(kind) {
-  const idKey = `${kind}FolderId`;
-  const id = config.get(idKey);
-  if (await alive(id)) return id;
-  const f = await json(`${DRIVE}/files?fields=id`, {
-    method: "POST",
-    body: { name: config.get(`${kind}FolderName`), mimeType: FOLDER },
-  });
-  config.update({ [idKey]: f.id });
+const ROLE = "clearnoteRole";
+
+async function folderInfo(id) {
+  if (!id) return null;
+  try {
+    const f = await json(`${DRIVE}/files/${id}?fields=id,trashed,parents,appProperties`);
+    return f.trashed ? null : f;
+  } catch (err) {
+    if (err.status === 404) return null;
+    throw err;
+  }
+}
+
+async function findByRole(role, parentId) {
+  const q = [
+    `mimeType='${FOLDER}'`,
+    "trashed=false",
+    `appProperties has { key='${ROLE}' and value='${role}' }`,
+    parentId ? `'${parentId}' in parents` : null,
+  ]
+    .filter(Boolean)
+    .join(" and ");
+  const r = await json(`${DRIVE}/files?q=${encodeURIComponent(q)}&fields=files(id)&spaces=drive&orderBy=createdTime`);
+  return r.files?.[0]?.id || null;
+}
+
+/** Tag an older folder with its role, put it under `parentId` and give it `name`. */
+async function adopt(f, role, { parentId, name }) {
+  const from = (f.parents || []).filter((p) => p !== parentId).join(",");
+  const move = parentId && !(f.parents || []).includes(parentId) ? `&addParents=${parentId}${from ? `&removeParents=${from}` : ""}` : "";
+  await call(`${DRIVE}/files/${f.id}?fields=id${move}`, { method: "PATCH", body: { appProperties: { [ROLE]: role }, ...(name ? { name } : {}) } });
   return f.id;
+}
+
+/** The main ClearNote folder (notes live here). */
+export async function mainFolder() {
+  let id = await findByRole("main");
+  if (!id) {
+    const old = await folderInfo(config.get("notesFolderId"));
+    id = old
+      ? await adopt(old, "main", { name: config.get("notesFolderName") })
+      : (await json(`${DRIVE}/files?fields=id`, { method: "POST", body: { name: config.get("notesFolderName"), mimeType: FOLDER, appProperties: { [ROLE]: "main" } } })).id;
+  }
+  if (id !== config.get("notesFolderId")) config.update({ notesFolderId: id });
+  return id;
+}
+
+/** A subfolder of the main folder: "audio" or "sync". */
+export async function subFolder(role, { name, legacyId, legacyTag } = {}) {
+  const parentId = await mainFolder();
+  let id = await findByRole(role, parentId);
+  if (!id) {
+    // A folder from an older version: by its saved ID, or by the tag it had.
+    let old = await folderInfo(legacyId);
+    if (!old && legacyTag) {
+      const q = `mimeType='${FOLDER}' and trashed=false and appProperties has { key='${legacyTag[0]}' and value='${legacyTag[1]}' }`;
+      const r = await json(`${DRIVE}/files?q=${encodeURIComponent(q)}&fields=files(id)&spaces=drive`);
+      old = await folderInfo(r.files?.[0]?.id);
+    }
+    id = old
+      ? await adopt(old, role, { parentId, name })
+      : (await json(`${DRIVE}/files?fields=id`, { method: "POST", body: { name, mimeType: FOLDER, parents: [parentId], appProperties: { [ROLE]: role } } })).id;
+  }
+  return id;
+}
+
+/** Bring folders made by older versions into the one ClearNote folder. */
+export async function tidyFolders() {
+  await mainFolder();
+  if (await folderInfo(config.get("audioFolderId"))) await ensureFolder("audio");
+}
+
+/** Where notes or audio go. */
+export async function ensureFolder(kind) {
+  if (kind === "notes") return mainFolder();
+  const id = await subFolder("audio", { name: config.get("audioFolderName") || "Audio", legacyId: config.get("audioFolderId") });
+  if (id !== config.get("audioFolderId")) config.update({ audioFolderId: id });
+  return id;
 }
 
 /** Upload (or replace) a file. Returns its Drive ID. */

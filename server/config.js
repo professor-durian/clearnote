@@ -49,10 +49,10 @@ export const FIELDS = {
   openrouterModel: { env: "OPENROUTER_MODEL", default: "anthropic/claude-opus-5.5" },
   // Saving to Google Drive / this computer
   saveNotes: { default: false }, // a Google Doc per meeting
-  notesFolderName: { default: "ClearNote Meeting Notes" },
+  notesFolderName: { default: "ClearNote" }, // the one ClearNote folder in Drive; notes at its top
   notesFolderId: { default: "" }, // set by ClearNote when it creates the folder
   saveAudio: { default: "off" }, // "off" | "drive" | "local"
-  audioFolderName: { default: "ClearNote Audio" },
+  audioFolderName: { default: "Audio" }, // subfolder of the ClearNote folder
   audioFolderId: { default: "" },
   audioLocalPath: { default: "" },
   // Name templates. Tags: {title} {date} {time} {year} {month} {day} {platform} {people} {part}

@@ -392,7 +392,7 @@ const RULES_KEY = "cn_tab_rules";
 function callMeta(url = "") {
   const meet = url.match(/meet\.google\.com\/(?:[\w-]+\/)*([a-z]{3}-[a-z]{4}-[a-z]{3})\b/i);
   if (meet) return { platform: "google_meet", platformLabel: "Google Meet", meetingKey: meet[1].toLowerCase() };
-  const zoom = url.match(/zoom\.us\/(?:j|wc|s)\/(\d{9,12})/i);
+  const zoom = url.match(/zoom\.us\/(?:j|wc|s)\/(?:join\/)?(\d{9,12})/i);
   if (zoom) return { platform: "zoom", platformLabel: "Zoom", meetingKey: `zoom:${zoom[1]}` };
   if (/teams\.(microsoft|live)\.com|cloud\.microsoft\.com/.test(url)) return { platform: "teams", platformLabel: "Microsoft Teams", meetingKey: `teams:${url.split("?")[0]}` };
   return null;

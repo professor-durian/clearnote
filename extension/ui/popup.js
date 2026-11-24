@@ -62,6 +62,13 @@ async function startAudio({ meta } = {}) {
   if (!res.ok) throw new Error(res.error || "Couldn't start recording.");
 }
 
+// A call page whose address ClearNote doesn't recognise still gets a call
+// identity, so audio and captions land in one capture.
+function fallbackCall() {
+  const zoom = (tab.url || "").match(/zoom\.us\/(?:j|wc|s)\/(?:join\/)?(\d{9,12})/i);
+  return zoom ? { platform: "zoom", platformLabel: "Zoom", meetingKey: `zoom:${zoom[1]}` } : null;
+}
+
 async function waitForSession(ms = 20000) {
   for (let t = 0; t < ms; t += 500) {
     const st = await ask("tabState", { tabId: tab.id });
@@ -140,13 +147,18 @@ async function render() {
       const wantCaptions = $("captions").checked;
       const wantAudio = $("audio").checked;
       if (!wantCaptions && !wantAudio) throw new Error("Tick at least one.");
+      // Audio first: Chrome's permission to record this tab lasts only a few
+      // seconds after the click, and audio must never wait on captions.
+      // Both land in the same capture (same call, same meeting id).
+      if (wantAudio) await startAudio({ meta: info.call || fallbackCall() });
       if (wantCaptions) {
         await chrome.tabs.sendMessage(tab.id, { type: "startCapture" }).catch(() => null);
-        $("msg").textContent = "Starting… (join the call if you haven't yet)";
-        const ready = await waitForSession();
-        if (!ready) throw new Error("Capture hasn't started. Join the call and allow captions, then try again.");
+        $("msg").textContent = wantAudio
+          ? "Recording. Turning on captions too…"
+          : "Starting… (join the call if you haven't yet)";
+        const ready = await waitForSession(wantAudio ? 8000 : 20000);
+        if (!ready && !wantAudio) throw new Error("Captions haven't started. Join the call in the browser and turn on captions, then try again.");
       }
-      if (wantAudio) await startAudio({ meta: info.call });
     });
     return;
   }

@@ -222,7 +222,18 @@
     if (isTop) paint({ status: "idle", statusText: `Waiting to join the ${adapter.label} call`, note: "" });
 
     CN.log(`adapter: ${adapter.id}, url: ${location.href}`);
+    // A launch page that handed the call to a desktop app (Zoom's /j/ links)
+    // will never "join" here: say how to join in the browser instead.
+    const launchCheck = setInterval(() => {
+      if (isTop && adapter.launchPage?.())
+        paint({
+          status: "idle",
+          statusText: `If the call opened in the ${adapter.label} app, ClearNote can't capture it`,
+          note: `Click “Join from your browser” on this page to capture the call here.`,
+        });
+    }, 2000);
     await adapter.waitForJoin();
+    clearInterval(launchCheck);
     CN.log(`joined — url now: ${location.href}, key: ${adapter.meetingKey()}`);
     if (isTop) paint({ statusText: "Turning on captions" });
 

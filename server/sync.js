@@ -13,9 +13,8 @@ import os from "node:os";
 import { db } from "./db.js";
 import * as config from "./config.js";
 import { connectionStatus } from "./google.js";
-import { DRIVE, UPLOAD, call } from "./drive.js";
+import { DRIVE, UPLOAD, call, subFolder } from "./drive.js";
 
-const FOLDER_MIME = "application/vnd.google-apps.folder";
 const FORMAT = 1;
 // Child tables copied with a meeting. Their own row ids are local, so dropped.
 const CHILDREN = {
@@ -143,30 +142,11 @@ export function onMeetingReceived(fn) {
 
 // ------------------------------------------------------------------ Drive
 
+// The "Sync" subfolder of the ClearNote folder, shared by every computer on
+// the account. An older top-level "ClearNote sync" folder is moved in.
 async function findFolder() {
-  const known = config.get("syncFolderId");
-  if (known) {
-    try {
-      const f = await (await call(`${DRIVE}/files/${known}?fields=id,trashed`)).json();
-      if (!f.trashed) return known;
-    } catch (err) {
-      if (err.status !== 404) throw err;
-    }
-  }
-  // Another computer may have made it already.
-  const q = `mimeType='${FOLDER_MIME}' and trashed=false and appProperties has { key='clearnoteSync' and value='1' }`;
-  const found = await (await call(`${DRIVE}/files?q=${encodeURIComponent(q)}&fields=files(id)&spaces=drive`)).json();
-  let id = found.files?.[0]?.id;
-  if (!id) {
-    const f = await (
-      await call(`${DRIVE}/files?fields=id`, {
-        method: "POST",
-        body: { name: "ClearNote sync", mimeType: FOLDER_MIME, appProperties: { clearnoteSync: "1" }, description: "Meetings shared between your computers by ClearNote. Leave as it is." },
-      })
-    ).json();
-    id = f.id;
-  }
-  config.update({ syncFolderId: id });
+  const id = await subFolder("sync", { name: "Sync", legacyId: config.get("syncFolderId"), legacyTag: ["clearnoteSync", "1"] });
+  if (id !== config.get("syncFolderId")) config.update({ syncFolderId: id });
   return id;
 }
 

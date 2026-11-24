@@ -967,8 +967,8 @@ async function renderSettings(tabName = "general") {
             ${driveNeeded ? `<sl-alert variant="warning" open><sl-icon slot="icon" name="exclamation-triangle"></sl-icon>Saving to Drive needs Google ${status.connected ? "reconnected once to add Drive access" : "connected"}: see <a href="#/settings/connections">Connections</a>.</sl-alert>` : ""}
             ${sw("saveNotes", "Save notes to Google Drive", "One Google Doc per capture, like Gemini's meeting notes, with a notes tab and a transcript tab. Calls and other captures share the folder.")}
             <div data-show="saveNotes" class="stack">
-              ${input("notesFolderName", "Notes folder name", "ClearNote Meeting Notes", "Used when ClearNote creates the folder. Afterwards rename or move it in Drive; ClearNote keeps using it.")}
-              ${v.notesFolderId ? `<a href="https://drive.google.com/drive/folders/${esc(v.notesFolderId)}" target="_blank" rel="noreferrer">Open the notes folder in Drive</a>` : ""}
+              ${input("notesFolderName", "ClearNote folder in Drive", "ClearNote", "One folder: notes at the top, audio in an Audio subfolder, data for your other computers in a Sync subfolder. Afterwards rename or move it in Drive; ClearNote keeps using it.")}
+              ${v.notesFolderId ? `<a href="https://drive.google.com/drive/folders/${esc(v.notesFolderId)}" target="_blank" rel="noreferrer">Open the ClearNote folder in Drive</a>` : ""}
             </div>
             <sl-radio-group data-key="saveAudio" label="Save audio files" value="${esc(v.saveAudio)}" help-text="Three MP3s per recording: everything mixed together, the tab's sound alone, and your microphone alone.">
               <sl-radio value="off">Don't save</sl-radio>
@@ -976,7 +976,7 @@ async function renderSettings(tabName = "general") {
               <sl-radio value="local">To a folder on this computer</sl-radio>
             </sl-radio-group>
             <div data-show-audio="drive" class="stack">
-              ${input("audioFolderName", "Drive audio folder name", "ClearNote Audio", "Used when ClearNote creates the folder.")}
+              ${input("audioFolderName", "Audio subfolder name", "Audio", "Inside the ClearNote folder.")}
               ${v.audioFolderId ? `<a href="https://drive.google.com/drive/folders/${esc(v.audioFolderId)}" target="_blank" rel="noreferrer">Open the audio folder in Drive</a>` : ""}
             </div>
             <div data-show-audio="local" class="stack">
