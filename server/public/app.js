@@ -541,7 +541,7 @@ function audioPanel(m) {
       .map(
         (t) => `<div class="row">
           <span style="width:190px;font-weight:600">${names[t.track] || t.track}</span>
-          <audio controls preload="none" src="${t.url}" style="flex:1 1 320px;height:36px"></audio>
+          <audio controls preload="metadata" data-fixlength src="${t.url}" style="flex:1 1 320px;height:36px"></audio>
         </div>`,
       )
       .join("")}
@@ -555,7 +555,28 @@ function audioPanel(m) {
   </section>`;
 }
 
+// Chrome's recorder writes WebM files without their length, so the player's
+// bar can't show where it is. Seeking far past the end makes the browser read
+// the whole file and learn the length; then go back to the start.
+function fixAudioLength(root = document) {
+  for (const el of root.querySelectorAll("audio[data-fixlength]")) {
+    el.removeAttribute("data-fixlength");
+    el.addEventListener("loadedmetadata", function once() {
+      if (el.duration !== Infinity) return;
+      el.removeEventListener("loadedmetadata", once);
+      const back = () => {
+        if (el.duration === Infinity) return;
+        el.removeEventListener("durationchange", back);
+        el.currentTime = 0;
+      };
+      el.addEventListener("durationchange", back);
+      el.currentTime = 1e101;
+    });
+  }
+}
+
 function wireMeeting(m) {
+  fixAudioLength(view);
   const title = document.getElementById("mtitle");
   title.onchange = () => api(`/meetings/${m.id}`, { method: "PATCH", body: JSON.stringify({ title: title.value }) });
 
