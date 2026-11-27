@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { reconcileParticipants } from "./matching.js";
+import * as config from "./config.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const file = process.env.CLEARNOTE_DB || path.join(here, "clearnote.db");
@@ -325,7 +326,10 @@ export function getMeeting(meetingId) {
     .map((r) => r.name);
   const event = m.calendar_event_id ? getEvent(m.calendar_event_id) : null;
   const { spoke, silent } = event
-    ? reconcileParticipants(speakers, event.attendees)
+    ? reconcileParticipants(speakers, event.attendees, {
+        // Your own addresses: never paired with someone else by elimination.
+        mine: [db.prepare(`SELECT email FROM google_account WHERE id = 1`).get()?.email, ...String(config.get("otherEmails") || "").split(/[\s,;]+/)].filter(Boolean),
+      })
     : { spoke: speakers.map((s) => ({ speaker: s, email: null, name: s })), silent: [] };
 
   return {

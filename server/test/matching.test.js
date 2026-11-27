@@ -253,3 +253,23 @@ test("a Meet link under the /meet/ path still yields its code", () => {
     "meet:abc-defg-hij",
   );
 });
+
+test("an invite address made from the name matches the speaker", async () => {
+  const { emailFitsName, reconcileParticipants } = await import("../matching.js");
+  assert.equal(emailFitsName("gkopf@mis-solutions.com", "Gina Kopf"), true);
+  assert.equal(emailFitsName("mt@matteotrovato.com", "Matteo Trovato"), true);
+  assert.equal(emailFitsName("taylorgoetz@hatchline.com", "Taylor Goetz"), true);
+  assert.equal(emailFitsName("gkopf@mis-solutions.com", "Lance Lyle"), false);
+  const r = reconcileParticipants(["Gina Kopf", "Lance Lyle"], [
+    { email: "gkopf@mis-solutions.com", name: null },
+    { email: "llyle@mis-solutions.com", name: null },
+  ]);
+  assert.deepEqual(r.spoke.map((s) => s.email), ["gkopf@mis-solutions.com", "llyle@mis-solutions.com"]);
+  assert.equal(r.silent.length, 0);
+});
+
+test("pairing by elimination never uses one of your own addresses", async () => {
+  const { reconcileParticipants } = await import("../matching.js");
+  const r = reconcileParticipants(["Dana"], [{ email: "me.personal@example.com", name: null }], { mine: ["me.personal@example.com"] });
+  assert.equal(r.spoke[0].email, null);
+});

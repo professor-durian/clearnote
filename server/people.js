@@ -75,6 +75,15 @@ export function resolvePerson(name, email) {
       p.email = e;
     }
   }
+  // A person first seen as a bare address ("gkopf") takes their real name
+  // once a call shows it.
+  if (p && e && name && /\s/.test(String(name).trim())) {
+    const local = e.split("@")[0];
+    if (!p.name || p.name === e || p.name === local) {
+      db.prepare(`UPDATE people SET name = ? WHERE id = ?`).run(String(name).trim(), p.id);
+      p.name = String(name).trim();
+    }
+  }
   if (!p) {
     const id = insertPerson.run(String(name || e || "Unknown").trim(), e, Date.now()).lastInsertRowid;
     p = { id: Number(id), name, email: e };

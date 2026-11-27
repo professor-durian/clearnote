@@ -201,7 +201,23 @@ export function normalizePerson(name) {
  * @param {string[]} speakers  names detected in the captions
  * @param {{email:string,name:string,organizer:number,response:string}[]} attendees
  */
-export function reconcileParticipants(speakers, attendees) {
+/**
+ * Could this email address belong to someone called `name`? Calendar invites
+ * often carry only the address, and companies build it from the name in a few
+ * standard ways: gina.kopf, ginakopf, gkopf, ginak, kopf, gk.
+ */
+export function emailFitsName(email, name) {
+  const local = String(email || "").toLowerCase().split("@")[0].replace(/[^a-z]/g, "");
+  const parts = normalizePerson(name).split(" ").map((w) => w.replace(/[^a-z]/g, "")).filter(Boolean);
+  if (!local || parts.length < 2) return false;
+  const first = parts[0];
+  const last = parts[parts.length - 1];
+  const forms = [first + last, last + first, first[0] + last, first + last[0], parts.map((w) => w[0]).join("")];
+  if (last.length > 3) forms.push(last);
+  return forms.includes(local);
+}
+
+export function reconcileParticipants(speakers, attendees, { mine = [] } = {}) {
   const used = new Set();
   const spoke = [];
 
@@ -222,8 +238,23 @@ export function reconcileParticipants(speakers, attendees) {
       );
     }
 
+    if (!match) {
+      // An address made from the name: gkopf@ for "Gina Kopf".
+      match = attendees.find((a) => !used.has(a.email) && !a.name && emailFitsName(a.email, speaker));
+    }
+
     if (match) used.add(match.email);
-    spoke.push({ speaker, email: match?.email ?? null, name: match?.name ?? speaker });
+    spoke.push({ speaker, email: match?.email ?? null, name: match?.name || speaker });
+  }
+
+  // By elimination: one named speaker and one invitee left over, and the
+  // invite gave no name to contradict it, are the same person.
+  const loose = spoke.filter((s) => !s.email && !/^(unknown|you\b|me\b)/i.test(s.speaker));
+  const self = new Set(mine.map((e) => String(e).toLowerCase()));
+  const left = attendees.filter((a) => !used.has(a.email) && !a.organizer && !self.has(String(a.email).toLowerCase()));
+  if (loose.length === 1 && left.length === 1 && !left[0].name) {
+    loose[0].email = left[0].email;
+    used.add(left[0].email);
   }
 
   return {
