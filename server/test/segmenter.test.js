@@ -361,3 +361,16 @@ test("each part gets its own timestamp across the utterance", () => {
     assert.equal(out[i].speaker, "Matteo");
   }
 });
+
+test("a caption the recogniser corrects after a pause isn't written down twice", () => {
+  let t = 0;
+  const out = [];
+  const seg = new CN.Segmenter({ startedAt: 0, silenceMs: 1000, onSegment: (s) => out.push(s.text), now: () => t, autoFlush: false });
+  seg.observe("zoom-1", "Scott", "Hey there, this is a test of the caption");
+  t = 1500;
+  seg.flushIdle();
+  seg.observe("zoom-1", "Scott", "Hey there, this is the test of the captions and it keeps going");
+  t = 3000;
+  seg.flushIdle();
+  assert.deepEqual(out, ["Hey there, this is a test of the caption", "and it keeps going"]);
+});

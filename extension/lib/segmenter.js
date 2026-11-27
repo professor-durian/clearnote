@@ -77,7 +77,24 @@
   function newPart(state) {
     const { text, prefix } = state;
     if (!prefix) return text;
-    return text.startsWith(prefix) ? text.slice(prefix.length) : text;
+    if (text.startsWith(prefix)) return text.slice(prefix.length);
+    // The recogniser corrected words it had already shown (Zoom does this), so
+    // the text no longer starts with exactly what was written down. Line the
+    // two up word by word; if most of what was written is still there at the
+    // start, keep only the words after it.
+    return startsLike(prefix, text) ? words(text).slice(words(prefix).length).join(" ") : text;
+  }
+
+  const words = (t) => t.split(/\s+/).filter(Boolean);
+  const wordKey = (w) => w.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+  /** Does `text` begin with (a corrected version of) `prefix`? Most words must line up. */
+  function startsLike(prefix, text) {
+    const pw = words(prefix);
+    const tw = words(text);
+    if (pw.length < 3 || tw.length < pw.length) return false;
+    let same = 0;
+    for (let i = 0; i < pw.length; i++) if (wordKey(pw[i]) === wordKey(tw[i])) same++;
+    return same / pw.length >= 0.6;
   }
 
   // Someone who talks without pausing produces one enormous line: correct, but
@@ -195,7 +212,10 @@
           prefix = prior;
           text = merged;
         }
-        // merged === null -> the node was recycled for a fresh utterance.
+        // A correction of what was already written, carrying on: emit only
+        // the words after it.
+        else if (startsLike(prior, text)) prefix = prior;
+        // Otherwise the node was recycled for a fresh utterance.
       }
 
       this.open.set(nodeKey, { speaker, text, prefix, startMs: now - this.startedAt, updatedAt: now });
