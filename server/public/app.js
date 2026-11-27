@@ -87,12 +87,46 @@ function statusOf(m) {
 let hookOn = false;
 api("/webhook").then((st) => (hookOn = !!st?.enabled)).catch(() => {});
 
+// ------------------------------------------------------------- clipboard
+
+function notesText(m) {
+  const s = m.summary || {};
+  return [
+    m.title,
+    new Date(m.started_at).toLocaleString(),
+    "",
+    s.tldr || "",
+    ...(s.key_points || []).map((p) => `• ${p}`),
+    s.decisions?.length ? `\nDecisions:\n${s.decisions.map((d) => `• ${d}`).join("\n")}` : "",
+    m.actionItems?.length
+      ? `\nNext steps:\n${m.actionItems.map((a) => `• ${a.text}${a.owner ? ` (${a.owner})` : ""}${a.due ? `, due ${a.due}` : ""}`).join("\n")}`
+      : "",
+  ].join("\n").trim();
+}
+
+/** The best transcript there is: enhanced (audio + captions) if made, else captions. */
+function transcriptText(m) {
+  const lines = m.mergedLines?.length
+    ? m.mergedLines.map((l) => `[${clock(l.startMs)}] ${l.speaker}: ${l.text}`)
+    : (m.segments || []).map((sg) => `[${clock(sg.start_ms)}] ${sg.speaker}: ${sg.text}`);
+  return [m.title, new Date(m.started_at).toLocaleString(), "", ...lines].join("\n").trim();
+}
+
+async function copyFrom(m, what) {
+  const full = m.segments ? m : await api(`/meetings/${m.id}`);
+  const text = what === "transcript" ? transcriptText(full) : notesText(full);
+  await navigator.clipboard.writeText(text);
+  notify(what === "transcript" ? "Transcript copied." : "Notes copied.", "success");
+}
+
 /** The redo actions, shared by the list's row menu and the meeting page. */
 async function runAction(action, m) {
   try {
     if (action === "open") return void (location.hash = `#/m/${m.id}`);
     if (action === "drive") return void window.open(m.saved?.notesUrl, "_blank", "noopener");
     if (action === "txt") return void (location.href = `/api/meetings/${m.id}/export.txt`);
+    if (action === "copy-notes") return copyFrom(m, "notes");
+    if (action === "copy-transcript") return copyFrom(m, "transcript");
     if (action === "retranscribe") {
       await api(`/meetings/${m.id}/retranscribe`, { method: "POST", body: "{}" });
       notify("Re-transcribing the audio. This takes a few minutes for a long call.");
@@ -138,6 +172,8 @@ function actionMenu(m, { compact = true } = {}) {
       <sl-menu-item value="save"><sl-icon slot="prefix" name="cloud-upload"></sl-icon>Save to Drive again</sl-menu-item>
       ${hookOn ? `<sl-menu-item value="send"><sl-icon slot="prefix" name="send"></sl-icon>Send to app again</sl-menu-item>` : ""}
       <sl-menu-item value="drive" ${m.saved?.notesUrl ? "" : "disabled"}><sl-icon slot="prefix" name="google"></sl-icon>Open notes in Drive</sl-menu-item>
+      <sl-menu-item value="copy-notes"><sl-icon slot="prefix" name="clipboard"></sl-icon>Copy notes</sl-menu-item>
+      <sl-menu-item value="copy-transcript"><sl-icon slot="prefix" name="clipboard"></sl-icon>Copy transcript</sl-menu-item>
       <sl-menu-item value="txt"><sl-icon slot="prefix" name="download"></sl-icon>Download transcript (.txt)</sl-menu-item>
       <sl-divider></sl-divider>
       <sl-menu-item value="delete"><sl-icon slot="prefix" name="trash"></sl-icon>Delete…</sl-menu-item>
@@ -344,13 +380,19 @@ async function renderMeeting(id, tabName = "notes") {
       <div class="row">
         ${m.saved?.notesUrl ? `<sl-button variant="primary" href="${esc(m.saved.notesUrl)}" target="_blank"><sl-icon slot="prefix" name="google"></sl-icon>Open notes in Drive</sl-button>` : ""}
         ${hasAudio ? `<sl-button data-act="retranscribe"><sl-icon slot="prefix" name="soundwave"></sl-icon>Re-transcribe</sl-button>` : ""}
+        <sl-dropdown placement="bottom-start" hoist id="copymenu">
+          <sl-button slot="trigger" caret><sl-icon slot="prefix" name="clipboard"></sl-icon>Copy</sl-button>
+          <sl-menu>
+            <sl-menu-item value="notes">Notes</sl-menu-item>
+            <sl-menu-item value="transcript">Transcript</sl-menu-item>
+          </sl-menu>
+        </sl-dropdown>
         <sl-button data-act="summary"><sl-icon slot="prefix" name="stars"></sl-icon>${hasSummary ? "Regenerate summary" : "Write summary"}</sl-button>
         <sl-button data-act="save"><sl-icon slot="prefix" name="cloud-upload"></sl-icon>Save to Drive again</sl-button>
         ${m.linked ? `<sl-button href="${esc(m.linked.url)}" target="_blank" rel="noreferrer"><sl-icon slot="prefix" name="box-arrow-up-right"></sl-icon>Open in ${esc(m.linked.name || new URL(m.linked.url).hostname)}</sl-button>` : ""}
         <sl-dropdown placement="bottom-end" hoist id="more">
           <sl-icon-button slot="trigger" name="three-dots" label="More actions"></sl-icon-button>
           <sl-menu>
-            <sl-menu-item value="copy"><sl-icon slot="prefix" name="clipboard"></sl-icon>Copy notes</sl-menu-item>
             <sl-menu-item value="txt"><sl-icon slot="prefix" name="download"></sl-icon>Download transcript (.txt)</sl-menu-item>
             <sl-divider></sl-divider>
             <sl-menu-item value="delete"><sl-icon slot="prefix" name="trash"></sl-icon>Delete…</sl-menu-item>
@@ -587,26 +629,11 @@ function wireMeeting(m) {
       b.loading = false;
     });
   }
+  document.getElementById("copymenu").addEventListener("sl-select", (e) => copyFrom(m, e.detail.item.value).catch((err) => notify(err.message, "danger")));
   document.getElementById("more").addEventListener("sl-select", async (e) => {
     const v = e.detail.item.value;
     if (v === "copy") {
-      const s = m.summary || {};
-      const text = [
-        m.title,
-        new Date(m.started_at).toLocaleString(),
-        "",
-        s.tldr || "",
-        ...(s.key_points || []).map((p) => `• ${p}`),
-        s.decisions?.length ? `\nDecisions:\n${s.decisions.map((d) => `• ${d}`).join("\n")}` : "",
-        m.actionItems.length
-          ? `\nNext steps:\n${m.actionItems.map((a) => `• ${a.text}${a.owner ? ` (${a.owner})` : ""}${a.due ? `, due ${a.due}` : ""}`).join("\n")}`
-          : "",
-      ]
-        .filter((x) => x !== undefined)
-        .join("\n");
-      await navigator.clipboard.writeText(text);
-      notify("Notes copied.", "success");
-    } else runAction(v, m);
+      await copyFrom(m, "notes");    } else runAction(v, m);
   });
 
   document.getElementById("actions").addEventListener("sl-change", async (e) => {
