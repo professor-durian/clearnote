@@ -122,7 +122,8 @@
       // Already on: the footer offers "Hide Captions".
       if (CN.buttonByLabel(/^\s*hide captions/i)) return true;
       // Current web client: More -> "Show Captions" (a tile in the More menu).
-      const moreMenu = CN.pick(['button[aria-label^="More meeting control" i]']);
+      // The toolbar can appear a few seconds after joining.
+      const moreMenu = await CN.waitFor(() => CN.pick(['button[aria-label^="More meeting control" i]']), { timeout: 15000 });
       if (moreMenu) {
         moreMenu.click();
         await CN.sleep(600);

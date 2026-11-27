@@ -16,7 +16,12 @@
   const STYLE = `
     :host { all: initial; --cn-mark: ${MARK};
       position: fixed; bottom: 80px; right: 20px; z-index: 2147483647;
-      width: 320px; pointer-events: auto; }
+      width: 320px;
+      /* The box around the panel can be taller than what's drawn (after a
+         drag it is pinned top and bottom). Only the visible parts take
+         clicks, so the call's own buttons underneath keep working. */
+      pointer-events: none; }
+    :host > * { pointer-events: auto; }
     :host(.cn-sharing) { display: none !important; }
     * { box-sizing: border-box; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
     .panel {
