@@ -41,7 +41,28 @@
     "button.footer__leave-btn",
     "[class*='footer__leave']",
     'button[aria-label*="Leave" i]',
+    'button[aria-label="End" i]', // the host sees End instead of Leave
   ];
+
+  // In speaker view, the name under the main video is whoever is talking.
+  // Zoom's web-client captions carry no names, so this is the best source.
+  const ACTIVE_SPEAKER = [
+    ".speaker-active-container__video-frame .video-avatar__avatar-footer",
+    ".speaker-active-container__video-frame [class*='avatar-footer']",
+  ];
+  const activeSpeaker = () => CN.normalize(CN.pick(ACTIVE_SPEAKER)?.textContent) || "";
+
+  // The web client at app.zoom.us runs the meeting inside <iframe id="webclient">
+  // (same origin). The frame inside does the capturing and shows the panel;
+  // the page around it stands back.
+  const insideWebclient = () => {
+    try {
+      return window.top !== window && window.frameElement?.id === "webclient";
+    } catch {
+      return false;
+    }
+  };
+  const wrapsWebclient = () => window.top === window && !!document.querySelector("iframe#webclient");
 
   const adapter = {
     id: "zoom",
@@ -56,7 +77,20 @@
     },
 
     matches() {
-      return /(^|\.)zoom\.us$/.test(location.hostname) && /\/(wc|j)\//.test(location.pathname);
+      if (!/(^|\.)zoom\.us$/.test(location.hostname)) return false;
+      if (insideWebclient()) return true;
+      // A meeting address, not Zoom's home or settings pages.
+      return /\/(?:wc|j|s)\/(?:join\/)?\d{9,12}/.test(location.pathname);
+    },
+
+    /** This frame shows ClearNote's panel even though it isn't the top page. */
+    ownsUi() {
+      return insideWebclient();
+    },
+
+    /** The meeting is in a frame inside this page: let that frame do the work. */
+    defers() {
+      return wrapsWebclient();
     },
 
     // In the call: a Leave control (Zoom redraws its client often, so match
@@ -64,7 +98,7 @@
     inCall() {
       return !!(
         CN.pick(LEAVE) ||
-        CN.buttonByLabel(/^\s*leave(\s+meeting)?\s*$/i) ||
+        CN.buttonByLabel(/^\s*(leave|end)(\s+meeting)?\s*$/i) ||
         CN.pick(["#wc-container-right", "[class*='meeting-client']", "[class*='meeting-app']", "#webclient"])
       );
     },
@@ -85,6 +119,23 @@
 
     async enableCaptions() {
       if (CN.pick(PANEL_ROOT) || CN.pick(SUBTITLE_ROOT)) return true;
+      // Already on: the footer offers "Hide Captions".
+      if (CN.buttonByLabel(/^\s*hide captions/i)) return true;
+      // Current web client: More -> "Show Captions" (a tile in the More menu).
+      const moreMenu = CN.pick(['button[aria-label^="More meeting control" i]']);
+      if (moreMenu) {
+        moreMenu.click();
+        await CN.sleep(600);
+        const show = CN.pick(['button[aria-label="Show Captions" i]']) || CN.buttonByLabel(/^\s*show captions\s*$/i);
+        if (show) {
+          show.click();
+          CN.log("turned Zoom captions on (More › Show Captions)");
+          if (await CN.waitFor(() => CN.pick(PANEL_ROOT) || CN.pick(SUBTITLE_ROOT) || CN.buttonByLabel(/^\s*hide captions/i), { timeout: 6000 }))
+            return true;
+        } else {
+          document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        }
+      }
 
       // "More" overflow -> Captions -> Show Captions. Zoom moves this around,
       // so try the direct controls first.
@@ -120,7 +171,7 @@
         const out = [];
         for (const item of items) {
           if (!item.dataset.cnKey) item.dataset.cnKey = CN.uuid();
-          const speaker = CN.normalize(CN.pick(NAME, item)?.textContent) || "Unknown speaker";
+          const speaker = CN.normalize(CN.pick(NAME, item)?.textContent) || activeSpeaker() || "Unknown speaker";
           let via = "selector";
           let text = CN.normalize(CN.pick(BODY, item)?.textContent);
           if (!text) {
@@ -142,7 +193,7 @@
       return [
         {
           key: "zoom-subtitle",
-          speaker: m ? CN.normalize(m[1]) : "Unknown speaker",
+          speaker: m ? CN.normalize(m[1]) : activeSpeaker() || "Unknown speaker",
           text: m ? CN.normalize(m[2]) : raw,
           via: "subtitle-bar",
         },

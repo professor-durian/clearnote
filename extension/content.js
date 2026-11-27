@@ -28,7 +28,9 @@
   }
   console.log("%c[ClearNote]", banner, `${adapter.label} detected. Waiting for you to join the call.`);
 
-  const isTop = window.top === window;
+  // The frame that shows the panel: normally the top page; on Zoom's web
+  // client, the meeting frame inside it.
+  const isTop = window.top === window || !!adapter.ownsUi?.();
   let session = null; // { id, startedAt }
   let segmenter = null;
   let observer = null;
@@ -51,6 +53,23 @@
         resolve({});
       }
     });
+
+  // A page whose meeting runs in a frame inside it (Zoom's web client) leaves
+  // the work, and the panel, to that frame.
+  let deferred = false;
+  async function standBack() {
+    if (!adapter.defers) return false;
+    await CN.waitFor(() => adapter.defers() || adapter.inCall?.() || adapter.launchPage?.(), {
+      timeout: 0x7fffffff,
+      interval: 1000,
+    });
+    if (!adapter.defers()) return false;
+    deferred = true;
+    CN.log("the meeting runs in a frame inside this page; leaving it to that frame");
+    sidebar?.destroy();
+    sidebar = null;
+    return true;
+  }
 
   function paint(patch = {}) {
     if (!sidebar) return;
@@ -171,6 +190,7 @@
     // "full" panel, "compact" pill, or "hidden" (nothing on the page; the
     // ClearNote icon in Chrome's toolbar still shows the state).
     const panelMode = actions.panel || "compact";
+    if (adapter.defers) standBack();
     if (isTop && panelMode !== "hidden") {
       sidebar = new CN.Sidebar({
         collapsed: panelMode === "compact",
@@ -222,6 +242,7 @@
     if (isTop) paint({ status: "idle", statusText: `Waiting to join the ${adapter.label} call`, note: "" });
 
     CN.log(`adapter: ${adapter.id}, url: ${location.href}`);
+    if (deferred || (await standBack())) return;
     // A launch page that handed the call to a desktop app (Zoom's /j/ links)
     // will never "join" here: say how to join in the browser instead.
     const launchCheck = setInterval(() => {
