@@ -117,47 +117,51 @@
       return /\/j\//.test(location.pathname) && !adapter.inCall() && !!CN.buttonByLabel(/launch meeting|join from (your )?browser/i);
     },
 
+    // Zoom's web client (2026): a "Show Captions" / "Hide Captions" button in
+    // the footer once captions have been used, otherwise More › Show Captions.
+    // The first time a host turns them on, Zoom asks for the caption language
+    // and waits for Save. Only buttons that say "Show" are ever clicked, so
+    // captions are never switched off by mistake.
     async enableCaptions() {
-      if (CN.pick(PANEL_ROOT) || CN.pick(SUBTITLE_ROOT)) return true;
-      // Already on: the footer offers "Hide Captions".
-      if (CN.buttonByLabel(/^\s*hide captions/i)) return true;
-      // Current web client: More -> "Show Captions" (a tile in the More menu).
-      // The toolbar can appear a few seconds after joining.
-      const moreMenu = await CN.waitFor(() => CN.pick(['button[aria-label^="More meeting control" i]']), { timeout: 15000 });
-      if (moreMenu) {
-        moreMenu.click();
-        await CN.sleep(600);
-        const show = CN.pick(['button[aria-label="Show Captions" i]']) || CN.buttonByLabel(/^\s*show captions\s*$/i);
+      const footer = (label) =>
+        [...document.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || "").trim().toLowerCase() === label);
+      const on = () => !!(footer("hide captions") || CN.pick(PANEL_ROOT) || CN.pick(SUBTITLE_ROOT));
+      const confirmLanguage = async () => {
+        const save = await CN.waitFor(
+          () => {
+            const b = [...document.querySelectorAll("button")].find((x) => /^\s*save\s*$/i.test(x.textContent || ""));
+            const box = b?.closest("[class*='modal' i],[role='dialog']")?.parentElement?.closest("[class*='modal' i],[role='dialog']") || b?.closest("[class*='modal' i],[role='dialog']");
+            return b && /caption/i.test(box?.textContent || document.body.textContent) ? b : null;
+          },
+          { timeout: 3000 },
+        );
+        if (save) {
+          save.click();
+          CN.log("confirmed Zoom's caption language");
+        }
+      };
+
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (on()) return true;
+        let show = footer("show captions");
+        if (!show) {
+          // The toolbar can appear a few seconds after joining.
+          const more = await CN.waitFor(() => CN.pick(['button[aria-label^="More meeting control" i]']), { timeout: 15000 });
+          if (more) {
+            if (more.getAttribute("aria-expanded") !== "true") more.click();
+            show = await CN.waitFor(() => CN.pick(['button[aria-label="Show Captions" i]']), { timeout: 3000 });
+            if (!show) document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+          }
+        }
         if (show) {
           show.click();
-          CN.log("turned Zoom captions on (More › Show Captions)");
-          if (await CN.waitFor(() => CN.pick(PANEL_ROOT) || CN.pick(SUBTITLE_ROOT) || CN.buttonByLabel(/^\s*hide captions/i), { timeout: 6000 }))
-            return true;
-        } else {
-          document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+          CN.log("clicked Zoom's Show Captions");
+          await confirmLanguage();
+          if (await CN.waitFor(on, { timeout: 4000 })) return true;
         }
+        await CN.sleep(1500);
       }
-
-      // "More" overflow -> Captions -> Show Captions. Zoom moves this around,
-      // so try the direct controls first.
-      const direct =
-        CN.buttonByLabel(/show captions|closed caption|^captions|live transcript/i) ||
-        CN.pick(['button[aria-label*="aption" i]', 'button[aria-label*="ranscript" i]']);
-      if (direct) {
-        direct.click();
-        CN.log("clicked the Zoom captions control");
-      } else {
-        const more = CN.buttonByLabel(/^more$|more meeting controls/i);
-        if (more) {
-          more.click();
-          await CN.sleep(500);
-          const item = CN.buttonByLabel(/caption|transcript/i);
-          if (item) item.click();
-        }
-      }
-      return !!(await CN.waitFor(() => CN.pick(PANEL_ROOT) || CN.pick(SUBTITLE_ROOT), {
-        timeout: 8000,
-      }));
+      return on();
     },
 
     captionRoot() {

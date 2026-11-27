@@ -68,7 +68,10 @@ export async function transcribeFile(file) {
     });
     await run(
       whisperBin() || "whisper-cli",
-      ["-m", MODEL, "-f", wav, "-l", LANGUAGE, "-ml", "1", "-sow", "-oj", "-of", base, "-np", "--vad", "-vm", VAD_MODEL],
+      ["-m", MODEL, "-f", wav, "-l", LANGUAGE, "-ml", "1", "-sow", "-oj", "-of", base, "-np", "--vad", "-vm", VAD_MODEL,
+        // Keep 0.3 s either side of speech. The default (0.03 s) clipped the
+        // start of a first word after a silence: "Testing" became "Podcasting".
+        "--vad-speech-pad-ms", "300"],
       { maxBuffer: 1 << 26, timeout: 2 * 60 * 60 * 1000 },
     );
     return parseWhisperJson(JSON.parse(readFileSync(`${base}.json`, "utf8")));
