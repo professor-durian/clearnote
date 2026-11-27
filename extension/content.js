@@ -262,10 +262,13 @@
     if (!ok) {
       CN.log("captions did not appear");
       if (isTop) {
-        paint({
-          status: "error",
-          statusText: "Turn on captions in the call to start capturing",
-        });
+        // On, but nobody has spoken: the caption area only appears with speech.
+        const quietButOn = adapter.captionState?.() === "on";
+        paint(
+          quietButOn
+            ? { status: "idle", statusText: "Captions on, waiting for someone to speak", note: "" }
+            : { status: "error", statusText: "Turn on captions in the call to start capturing" },
+        );
       }
       // Keep trying: the user may switch them on by hand.
       const root = await CN.waitFor(() => adapter.captionRoot(), {

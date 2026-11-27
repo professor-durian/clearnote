@@ -11,7 +11,24 @@ const DOCS = "https://docs.googleapis.com/v1/documents";
 const FOLDER = "application/vnd.google-apps.folder";
 const GDOC = "application/vnd.google-apps.document";
 
-export async function call(url, { method = "GET", body, headers = {}, raw = false } = {}) {
+// Network blips and Google's own hiccups (5xx, rate limits) are retried a
+// couple of times before a request counts as failed.
+export async function call(url, opts = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await callOnce(url, opts);
+    } catch (err) {
+      const transient = !err.status || err.status >= 500 || err.status === 429;
+      if (!transient || attempt >= 2) {
+        if (!err.status && err.cause) err.message = `${err.message} (${err.cause.code || err.cause.message})`;
+        throw err;
+      }
+      await new Promise((r) => setTimeout(r, 1500 * 2 ** attempt));
+    }
+  }
+}
+
+async function callOnce(url, { method = "GET", body, headers = {}, raw = false } = {}) {
   const token = await accessToken();
   const res = await fetch(url, {
     method,

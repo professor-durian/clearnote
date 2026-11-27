@@ -533,6 +533,11 @@ chrome.commands.onCommand.addListener(async (command, tab) => {
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   const rec = await recording();
   if (rec?.tabId === tabId) await stopRecording("tab_closed");
+  // Closing the tab ends the call: tell the server, so the capture doesn't
+  // stay "in progress" and its summary and audio processing can run.
+  const { [SESSIONS_KEY]: sessions = {} } = await chrome.storage.session.get(SESSIONS_KEY);
+  const sid = sessions[tabId]?.sessionId;
+  if (sid) await api(`/api/sessions/${encodeURIComponent(sid)}/end`, { endedAt: Date.now(), reason: "tab_closed" }).catch(() => {});
   await forgetTabSession(tabId);
   await badge();
 });

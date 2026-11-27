@@ -164,6 +164,13 @@
       return on();
     },
 
+    captionState() {
+      const label = (l) => [...document.querySelectorAll("button")].some((b) => (b.getAttribute("aria-label") || "").trim().toLowerCase() === l);
+      if (label("hide captions") || CN.pick(PANEL_ROOT) || CN.pick(SUBTITLE_ROOT)) return "on";
+      if (label("show captions")) return "off";
+      return "unknown";
+    },
+
     captionRoot() {
       return CN.pick(PANEL_ROOT) || CN.pick(SUBTITLE_ROOT);
     },

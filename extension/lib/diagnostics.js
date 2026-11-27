@@ -55,6 +55,7 @@
         adapter: a.id,
         joined: !a.hasLeft(),
         captionRootFound: !!root,
+        captionsOn: a.captionState?.() === "on",
         selectors: {
           captionRoot: probeList(sel.captionRoot, document),
           leave: probeList(sel.leave, document),
@@ -270,6 +271,7 @@
 
   function verdict(r) {
     if (!r.captionRootFound) {
+      if (r.joined && r.captionsOn) return "Captions are on, but nothing has been said yet, so there is nothing to read.";
       return r.joined
         ? "No caption region found. Either captions are off in the call, or the captionRoot selectors need updating."
         : "Not in a call yet, so there is nothing to find.";

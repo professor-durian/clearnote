@@ -1,4 +1,5 @@
 import express from "express";
+import { statSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -136,16 +137,51 @@ app.post(
     if (!meetingId) return res.status(404).json({ error: "unknown session" });
     const { endedAt = Date.now(), speakers = [], title, myName = "" } = req.body || {};
     if (title) db.prepare(`UPDATE meetings SET title = ? WHERE id = ?`).run(title, meetingId);
-    closeMeeting(meetingId, { endedAt: Number(endedAt), speakers });
-
     // Answer the extension immediately; matching and the summary run behind it.
     res.json({ ok: true, id: meetingId });
-    matchToCalendar(meetingId)
-      .catch((err) => console.warn(`[clearnote] calendar match skipped: ${err.message}`))
-      .finally(() => summarize(meetingId).catch(() => {}));
-    processAudio(meetingId, { myName }).catch(() => {});
+    finishMeeting(meetingId, { endedAt: Number(endedAt), speakers, myName });
   }),
 );
+
+/** End a capture and start what follows: calendar match, summary, audio. */
+function finishMeeting(meetingId, { endedAt = Date.now(), speakers = [], myName = "" } = {}) {
+  closeMeeting(meetingId, { endedAt, speakers });
+  matchToCalendar(meetingId)
+    .catch((err) => console.warn(`[clearnote] calendar match skipped: ${err.message}`))
+    .finally(() => summarize(meetingId).catch(() => {}));
+  processAudio(meetingId, { myName }).catch(() => {});
+}
+
+// A capture whose tab vanished without saying goodbye (Chrome quit, the Mac
+// slept, the extension reloaded) would stay "in progress" forever. After two
+// hours with no new caption or audio, end it at its last sign of life.
+function endAbandoned() {
+  const quiet = 2 * 3600e3;
+  const rows = db
+    .prepare(
+      `SELECT m.id, m.started_at,
+              (SELECT MAX(end_ms) FROM segments s WHERE s.meeting_id = m.id) AS last_seg
+         FROM meetings m WHERE m.ended_at IS NULL AND m.status = 'live'`,
+    )
+    .all();
+  for (const r of rows) {
+    // Audio is written to disk as it records: its files' last change counts too.
+    const audioAt = db
+      .prepare(`SELECT file FROM audio_tracks WHERE meeting_id = ?`)
+      .all(r.id)
+      .map((t) => {
+        try {
+          return statSync(t.file).mtimeMs;
+        } catch {
+          return 0;
+        }
+      });
+    const last = Math.max(r.started_at + (r.last_seg || 0), ...audioAt);
+    if (Date.now() - last < quiet) continue;
+    console.log(`[clearnote] ${r.id}: no activity for 2 hours; ending it`);
+    finishMeeting(r.id, { endedAt: Math.max(last, r.started_at + 1000) });
+  }
+}
 
 registerAudioRoutes(app, { requireToken, wrap });
 onAudioDone((id) => {
@@ -862,6 +898,8 @@ onMeetingRemoved((id) => {
 if (!process.env.NODE_TEST_CONTEXT && !process.env.CLEARNOTE_NO_BACKGROUND) {
   if (google.connectionStatus().drive) drive.tidyFolders().catch((err) => console.warn(`[clearnote] Drive folder tidy-up failed: ${err.message}`));
   startSyncLoop(2 * 60 * 1000);
+  setTimeout(endAbandoned, 20_000);
+  setInterval(endAbandoned, 10 * 60_000);
   startWebhookLoop();
   startUpdateChecks();
 }
