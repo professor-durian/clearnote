@@ -87,3 +87,14 @@ test("your other email addresses count as you", () => {
   assert.ok(names.includes("dana@example.com"));
   config.update({ otherEmails: "" });
 });
+
+test("“This is me” moves a person's names and email to your own", () => {
+  const id = meeting("Dial-in call", Date.UTC(2026, 10, 21), ["+66 92 000 0012"]);
+  const p = people.listPeople().find((x) => x.name === "+66 92 000 0012");
+  assert.ok(p);
+  assert.equal(people.markAsMe(p.id), true);
+  assert.ok(!people.listPeople().some((x) => x.name === "+66 92 000 0012"));
+  assert.match(config.get("otherNames"), /\+66 92 000 0012/);
+  people.syncMeetingPeople(id); // a later rebuild doesn't bring them back
+  assert.ok(!people.listPeople().some((x) => x.name === "+66 92 000 0012"));
+});

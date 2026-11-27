@@ -961,6 +961,7 @@ async function renderSettings(tabName = "general") {
           <h2>General</h2>
           ${input("displayName", "Your name", "e.g. Ada Lovelace", "Captions call you “You”. This puts your name in transcripts and notes.")}
           ${sw("autoCapture", "Capture every call automatically", "Captions start when you join a Meet, Zoom or Teams call in Chrome.")}
+          ${input("otherNames", "Other names you appear under", "+66 92 123 4567, Scotty", "A phone number you dial in from, or a nickname. \"This is me\" on a person's page adds to this.")}
           ${input("otherEmails", "Your other email addresses", "me@gmail.com, me@work.com", "So ClearNote knows they're you: you're left out of People and marked as yourself when captures are sent to another app.")}
           ${sw("showActionItems", "Show Action items in the menu", "Next steps still appear on each capture's page either way.")}
           ${sw("hideCaptions", "Hide the platform's caption overlay", "Captions stay on so ClearNote can read them, but off your screen.")}
@@ -1705,6 +1706,8 @@ async function renderPerson(id) {
       </div>
       <div class="row">
         <sl-button href="#/?person=${p.id}"><sl-icon slot="prefix" name="funnel"></sl-icon>Show their calls in Captures</sl-button>
+        <sl-button id="pmerge"><sl-icon slot="prefix" name="union"></sl-icon>Merge into…</sl-button>
+        <sl-button id="pme"><sl-icon slot="prefix" name="person-check"></sl-icon>This is me</sl-button>
         <sl-dropdown placement="bottom-end" hoist id="pmore">
           <sl-icon-button slot="trigger" name="three-dots" label="More"></sl-icon-button>
           <sl-menu>
@@ -1768,6 +1771,13 @@ async function renderPerson(id) {
     notify("Name updated.", "success");
   };
   const dlg = document.getElementById("mergeDlg");
+  document.getElementById("pmerge").onclick = () => document.getElementById("pmore").dispatchEvent(new CustomEvent("sl-select", { detail: { item: { value: "merge" } } }));
+  document.getElementById("pme").onclick = async () => {
+    if (!confirm(`Mark “${p.name}”${p.email ? ` (${p.email})` : ""} as you?\n\nThey'll be removed from People and added to your own names and email addresses in Settings › General, so future calls leave them out too.`)) return;
+    await api(`/people/${p.id}/me`, { method: "POST", body: "{}" });
+    notify("Added to your own names and addresses.", "success");
+    location.hash = "#/people";
+  };
   document.getElementById("pmore").addEventListener("sl-select", async (e) => {
     const v = e.detail.item.value;
     if (v === "email") {

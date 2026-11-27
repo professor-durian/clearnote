@@ -18,7 +18,8 @@ const FILE = process.env.CLEARNOTE_SETTINGS || path.join(os.homedir(), ".clearno
 export const FIELDS = {
   // capture (read by the extension)
   displayName: { default: "" },
-  otherEmails: { default: "" }, // more of your own addresses, comma-separated: you, not an attendee
+  otherEmails: { default: "" },
+  otherNames: { default: "" }, // more names you appear under in calls (a phone number, a nickname), comma-separated // more of your own addresses, comma-separated: you, not an attendee
   showActionItems: { default: true }, // "Action items" in the dashboard's top menu
   autoCapture: { default: true },
   hideCaptions: { default: true },

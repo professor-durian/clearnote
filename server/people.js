@@ -52,6 +52,7 @@ export function isSelf(name, email) {
   if (n === "you" || n === "me") return true;
   const mine = norm(config.get("displayName"));
   if (mine && n === mine) return true;
+  if (n && String(config.get("otherNames") || "").split(",").some((x) => norm(x) === n)) return true;
   if (!email) return false;
   const e = email.toLowerCase();
   const acct = db.prepare(`SELECT email FROM google_account WHERE id = 1`).get()?.email;
@@ -165,6 +166,29 @@ export function listPeople({ q = "", sort = "meetings", includeHidden = false } 
     name: (a, b) => a.name.localeCompare(b.name),
   }[sort] || ((a, b) => b.meetings - a.meetings);
   return filtered.sort(order);
+}
+
+/**
+ * "This is me": the person's names and email become yours (Settings ›
+ * General), so they're left out of People now and in every later call.
+ */
+export function markAsMe(id) {
+  const p = db.prepare(`SELECT * FROM people WHERE id = ?`).get(id);
+  if (!p) return false;
+  const names = new Set([p.name, ...db.prepare(`SELECT alias FROM person_aliases WHERE person_id = ?`).all(id).map((r) => r.alias)].filter(Boolean));
+  const add = (key, values) => {
+    const cur = String(config.get(key) || "").split(",").map((x) => x.trim()).filter(Boolean);
+    for (const v of values) if (!cur.some((c) => norm(c) === norm(v))) cur.push(v);
+    config.update({ [key]: cur.join(", ") });
+  };
+  add("otherNames", [...names]);
+  if (p.email) add("otherEmails", [p.email]);
+  db.transaction(() => {
+    db.prepare(`DELETE FROM meeting_people WHERE person_id = ?`).run(id);
+    db.prepare(`DELETE FROM person_aliases WHERE person_id = ?`).run(id);
+    db.prepare(`DELETE FROM people WHERE id = ?`).run(id);
+  })();
+  return true;
 }
 
 export function getPerson(id) {

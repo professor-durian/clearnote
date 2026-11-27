@@ -337,6 +337,10 @@ app.patch(
   }),
 );
 app.post(
+  "/api/people/:id/me",
+  wrap((req, res) => res.json({ ok: people.markAsMe(Number(req.params.id)) })),
+);
+app.post(
   "/api/people/:id/merge",
   wrap((req, res) => {
     people.mergePeople(Number(req.params.id), Number(req.body?.into));
